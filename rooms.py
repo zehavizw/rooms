@@ -74,25 +74,46 @@ st.title("🎤 ניהול חכם - זיכרון קבוע")
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
-if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
+with tab1:
+    if st.button("🔄 סנכרן ונקה"):
+        st.session_state.web_bookings = sync_and_cleanup()
+        st.success("סונכרן ובוצע ניקוי!")
+
+    if 'web_bookings' in st.session_state:
+        # בדיקה מי כבר פעיל ב-Database
+        res_active = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
+        active_ids = [str(a['booking_id']) for a in res_active.json()] if res_active.status_code == 200 else []
+
+        for b in st.session_state.web_bookings:
+            # --- כאן מגדירים את המשתנים שחסרו לך ---
+            bid = str(b['id']) 
+            name = b.get('customer_name', 'לקוח')
+            room_name = b.get('room', {}).get('name', 'לא הוקצה')
+            
+            # אם הם כבר פעילים, אל תציג אותם בלוח
+            if bid in active_ids: continue 
+
+            with st.expander(f"⏳ {name} | {b.get('start_time')} | {room_name}"):
+                p = st.number_input("אנשים", 1, 50, 2, key=f"p_{bid}")
+                d = st.number_input("דקות", 15, 300, 60, key=f"d_{bid}")
+                actual_r = st.text_input("חדר בפועל", value=room_name, key=f"r_edit_{bid}")
+                
+                # הכפתור עם ה-Debug שהוספנו
+                if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
                     data = {
                         "booking_id": bid, "name": name, "room_name": actual_r,
                         "start_time": datetime.now().isoformat(),
                         "total_people": p, "paying_people": p, "planned_duration": d
                     }
-                    # שליחת הנתונים ושמירת התגובה מהשרת במשתנה res
                     res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
                     
                     if res.status_code in [200, 201]:
-                        # אם השמירה הצליחה - שלח טלגרם ורענן
                         send_telegram(f"✅ {name} נכנסו ל-{actual_r}.")
                         st.rerun()
                     else:
-                        # אם השמירה נכשלה - תראה לי את השגיאה באדום!
                         st.error(f"⚠️ תקלה בשמירה ל-Supabase: {res.status_code}")
                         st.write("הודעת השגיאה המלאה:")
-                        st.code(res.text) # זה יראה לנו בדיוק מה חסר בטבלה
-with tab2:
+                        st.code(res.text)with tab2:
     active_rooms_timer()
 
 with tab3:
