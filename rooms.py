@@ -93,7 +93,6 @@ if 'notified_entries' not in st.session_state: st.session_state.notified_entries
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - זיכרון קבוע")
 
-# --- לוח השנה שולט עכשיו על כל האפליקציה (גם לשונית 1 וגם לשונית 2) ---
 col1, col2 = st.columns([2, 1])
 with col1:
     selected_date = st.date_input("📅 בחר תאריך להצגה", datetime.now().date())
@@ -135,7 +134,9 @@ with tab1:
                     res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
                     
                     if res.status_code in [200, 201]:
-                        send_telegram(f"✅ {name} נכנסו ל-{actual_r}.")
+                        # --- עדכון הודעת הכניסה בטלגרם ---
+                        msg_in = f"✅ כניסה חדשה:\n👤 שם: {name}\n📍 חדר: {actual_r}\n👥 אנשים: {p}\n⏳ זמן מתוכנן: {d} דקות"
+                        send_telegram(msg_in)
                         st.rerun()
                     else:
                         st.error(f"⚠️ תקלה בשמירה: {res.status_code}")
@@ -150,7 +151,6 @@ with tab2:
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         all_rooms = res.json() if res.status_code == 200 else []
 
-        # --- הסינון החדש! מציג רק את החדרים ששייכים לתאריך שבחרת למעלה ---
         filtered_by_date = [r for r in all_rooms if get_shift_date(r['start_time']) == selected_date]
 
         if view_filter == "⚡ עכשיו בפעילות":
@@ -175,7 +175,7 @@ with tab2:
                 planned = room.get('planned_duration', 60)
                 
                 if is_active and elapsed >= planned and f"out_{room['id']}" not in st.session_state.notified_entries:
-                    send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
+                    send_telegram(f"⏰ זמן נגמר!\nהקבוצה של {room['name']} סיימה {planned} דקות.")
                     st.session_state.notified_entries.add(f"out_{room['id']}")
 
                 st.subheader(f"📍 {room['room_name']} | {room['name']} (נקבע ל-{planned} דק')")
@@ -196,7 +196,11 @@ with tab2:
                             "paying_people": paying
                         }
                         requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
-                        send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
+                        
+                        # --- עדכון הודעת היציאה בטלגרם ---
+                        msg_out = f"💸 סיום חדר:\n👤 שם: {room['name']}\n⏱️ זמן בפועל: {mins:02d}:{secs:02d}\n💰 לתשלום: ₪{total:.2f}"
+                        send_telegram(msg_out)
+                        
                         st.rerun()
                 else:
                     total, per_p = calculate_price_logic(room['total_people'], room['paying_people'], elapsed)
