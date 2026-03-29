@@ -15,7 +15,6 @@ def get_now():
     return datetime.now(IL_TZ)
 
 def format_simple_clock(total_seconds):
-    """מחזירה רק את השעון בפורמט נקי HH:MM:SS"""
     total_seconds = int(total_seconds)
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
@@ -25,9 +24,12 @@ def format_simple_clock(total_seconds):
 # --- פונקציות ליבה ---
 def get_source_headers():
     auth_url = f"{SOURCE_URL}/auth/v1/token?grant_type=refresh_token"
-    res = requests.post(auth_url, json={"refresh_token": st.secrets["REFRESH_TOKEN"]}, headers={"apikey": SOURCE_KEY})
-    token = res.json().get("access_token")
-    return {"apikey": SOURCE_KEY, "Authorization": f"Bearer {token}"}
+    try:
+        res = requests.post(auth_url, json={"refresh_token": st.secrets["REFRESH_TOKEN"]}, headers={"apikey": SOURCE_KEY})
+        token = res.json().get("access_token")
+        return {"apikey": SOURCE_KEY, "Authorization": f"Bearer {token}"}
+    except:
+        return {"apikey": SOURCE_KEY, "Authorization": f"Bearer {SOURCE_KEY}"}
 
 def get_my_headers():
     return {"apikey": MY_KEY, "Authorization": f"Bearer {MY_KEY}", "Content-Type": "application/json", "Prefer": "return=representation"}
@@ -56,8 +58,14 @@ def sync_and_cleanup(selected_date):
     now = get_now()
     q_date = (now - timedelta(days=1)).strftime("%Y-%m-%d") if (selected_date == now.date() and now.hour < 6) else selected_date.strftime("%Y-%m-%d")
     is_current = (q_date == now.strftime("%Y-%m-%d")) or (now.hour < 6 and q_date == (now - timedelta(days=1)).strftime("%Y-%m-%d"))
-    res = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), params={"booking_date": f"eq.{q_date}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
-    if res.status_code != 200: return []
+    
+    headers = get_source_headers()
+    res = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=headers, params={"booking_date": f"eq.{q_date}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
+    
+    if res.status_code != 200:
+        st.error(f"שגיאת סנכרון: {res.status_code}")
+        return []
+        
     source_bookings = res.json()
     if is_current:
         ids = [str(b['id']) for b in source_bookings]
@@ -82,28 +90,48 @@ st.title("🎤 ניהול חכם - זיכרון קבוע")
 selected_date = st.date_input("📅 בחר תאריך להצגה", get_now().date())
 if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.session_state.web_bookings = sync_and_cleanup(selected_date)
-    st.success("עודכן!")
+    if st.session_state.web_bookings:
+        st.success(f"נמצאו {len(st.session_state.web_bookings)} הזמנות!")
+    else:
+        st.warning("לא נמצאו הזמנות לתאריך זה.")
 
 st.divider()
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון"])
 
 with tab1:
-    if 'web_bookings' in st.session_state:
+    if 'web_bookings' in st.session_state and st.session_state.web_bookings:
         res_a = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         a_ids = [str(a['booking_id']) for a in res_a.json()] if res_a.status_code == 200 else []
+        
         for b in st.session_state.web_bookings:
             bid = str(b['id'])
             if bid in a_ids: continue
-            # הצגת זמן ההזמנה המקורי בכותרת של לוח הזמנות
-            duration_orig = b.get('duration_minutes', 60)
-            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({duration_orig} דק') | {b.get('room',{}).get('name')}"):
-                p = st.number_input("אנשים", 1, 50, 2, key=f"p_{bid}")
-                d = st.number_input("משך זמן (דקות)", 15, 300, duration_orig, key=f"d_{bid}")
-                r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
+            
+            # ניסיון משיכה בטוח של הנתונים
+            orig_people = b.get('total_people') or b.get('num_people') or 2
+            orig_duration = b.get('duration_minutes') or b.get('duration') or 60
+            
+            with st.expander(f"⏳ {b.get('customer_name', 'לקוח')} | {b.get('start_time')} ({orig_duration} דק')"):
+                p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
+                d = st.number_input("משך זמן (דקות)", 15, 300, int(orig_duration), key=f"d_{bid}")
+                room_name = b.get('room', {}).get('name', 'לא הוקצה')
+                r_act = st.text_input("חדר", value=room_name, key=f"r_{bid}")
+                
                 if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
-                    requests.post(f"{MY_URL}/rest/v1/active_sessions", json={"booking_id":bid,"name":b.get('customer_name'),"room_name":r_act,"start_time":get_now().isoformat(),"total_people":p,"paying_people":p,"planned_duration":d,"status":"active"}, headers=get_my_headers())
-                    send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דק')")
+                    requests.post(f"{MY_URL}/rest/v1/active_sessions", json={
+                        "booking_id": bid,
+                        "name": b.get('customer_name', 'לקוח'),
+                        "room_name": r_act,
+                        "start_time": get_now().isoformat(),
+                        "total_people": p,
+                        "paying_people": p,
+                        "planned_duration": d,
+                        "status": "active"
+                    }, headers=get_my_headers())
+                    send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש)")
                     st.rerun()
+    else:
+        st.info("לחצי על כפתור הסנכרון למעלה כדי לראות הזמנות.")
 
 with tab2:
     v = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
@@ -113,40 +141,42 @@ with tab2:
         rooms = [r for r in (res.json() if res.status_code==200 else []) if get_shift_date(r['start_time']) == selected_date]
         disp = [r for r in rooms if r.get('status','active').startswith('active')] if v == "⚡ עכשיו בפעילות" else [r for r in rooms if r.get('status') == 'finished']
         
-        for r in disp:
-            s_dt = datetime.fromisoformat(r['start_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
-            planned = r.get('planned_duration', 60)
-            
-            if r.get('status') == 'finished':
-                e_dt = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
-                diff = e_dt - s_dt
-                active = False
-            else:
-                diff = get_now() - s_dt
-                active = True
-            
-            # הצגת זמן הכניסה וזמן ההזמנה המקורי בכותרת
-            st.subheader(f"📍 {r['room_name']} | {r['name']} (נכנסו ב-{s_dt.strftime('%H:%M')} | הוזמן ל-{planned} דק')")
-            
-            if active:
-                pay = st.number_input("משלמים", 1, 50, r['paying_people'], key=f"pay_{r['id']}")
-                total, per = calculate_price_logic(r['total_people'], pay, diff.total_seconds()/60)
+        if disp:
+            for r in disp:
+                s_dt = datetime.fromisoformat(r['start_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
+                planned = r.get('planned_duration', 60)
                 
-                c1, c2, c3 = st.columns([2, 1, 1])
-                with c1:
-                    st.write("⏱️ **זמן שחלף:**")
-                    st.write(format_simple_clock(diff.total_seconds()))
-                c2.metric("💰 **סה\"כ**", f"₪{total:.2f}")
-                c3.metric("👤 **לאדם**", f"₪{per:.2f}")
+                if r.get('status') == 'finished':
+                    e_dt = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
+                    diff = e_dt - s_dt
+                    active = False
+                else:
+                    diff = get_now() - s_dt
+                    active = True
                 
-                if st.button(f"💰 סיום ל-{r['name']}", key=f"e_{r['id']}", use_container_width=True):
-                    requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"finished","end_time":get_now().isoformat(),"paying_people":pay}, headers=get_my_headers())
-                    send_telegram(f"💸 סיום: {r['name']} סיימו. נגבה ₪{total:.2f}")
-                    st.rerun()
-            else:
-                total, per = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
-                st.success(f"הסתיים. זמן כולל: {int(diff.total_seconds()//60)} דק' | נגבה: ₪{total:.2f}")
-            st.divider()
+                st.subheader(f"📍 {r['room_name']} | {r['name']} (הוזמן ל-{planned} דק')")
+                
+                if active:
+                    pay = st.number_input("משלמים", 1, 50, r['paying_people'], key=f"pay_{r['id']}")
+                    total, per = calculate_price_logic(r['total_people'], pay, diff.total_seconds()/60)
+                    
+                    c1, c2, c3 = st.columns([2, 1, 1])
+                    with c1:
+                        st.write("⏱️ **זמן שחלף:**")
+                        st.write(format_simple_clock(diff.total_seconds()))
+                    c2.metric("💰 **סה\"כ**", f"₪{total:.2f}")
+                    c3.metric("👤 **לאדם**", f"₪{per:.2f}")
+                    
+                    if st.button(f"💰 סיום ל-{r['name']}", key=f"e_{r['id']}", use_container_width=True):
+                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"finished","end_time":get_now().isoformat(),"paying_people":pay}, headers=get_my_headers())
+                        send_telegram(f"💸 סיום: {r['name']} סיימו. נגבה ₪{total:.2f}")
+                        st.rerun()
+                else:
+                    total, per = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
+                    st.success(f"הסתיים. נגבה: ₪{total:.2f}")
+                st.divider()
+        else:
+            st.info("אין חדרים פעילים כרגע.")
     timer()
 
 with tab3:
