@@ -74,72 +74,24 @@ st.title("🎤 ניהול חכם - זיכרון קבוע")
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
-with tab1:
-    if st.button("🔄 סנכרן ונקה"):
-        st.session_state.web_bookings = sync_and_cleanup()
-        st.success("סונכרן ובוצע ניקוי!")
-
-    if 'web_bookings' in st.session_state:
-        # בדיקה מי כבר פעיל ב-DB
-        res_active = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
-        active_ids = [str(a['booking_id']) for a in res_active.json()] if res_active.status_code == 200 else []
-
-        for b in st.session_state.web_bookings:
-            bid = str(b['id'])
-            if bid in active_ids: continue # לא להציג את מי שכבר בפנים
-            
-            name = b.get('customer_name', 'לקוח')
-            room_name = b.get('room', {}).get('name', 'לא הוקצה')
-            
-            with st.expander(f"⏳ {name} | {b.get('start_time')} | {room_name}"):
-                p = st.number_input("אנשים", 1, 50, 2, key=f"p_{bid}")
-                d = st.number_input("דקות", 15, 300, 60, key=f"d_{bid}")
-                actual_r = st.text_input("חדר בפועל", value=room_name, key=f"r_edit_{bid}")
-                if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
+if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
                     data = {
                         "booking_id": bid, "name": name, "room_name": actual_r,
                         "start_time": datetime.now().isoformat(),
                         "total_people": p, "paying_people": p, "planned_duration": d
                     }
-                    requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
-                    send_telegram(f"✅ {name} נכנסו ל-{actual_r}."); st.rerun()
-
-@st.fragment(run_every=5)
-def active_rooms_timer():
-    # קריאה ישירה מה-Database
-    res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
-    active_rooms = res.json() if res.status_code == 200 else []
-
-    if active_rooms:
-        for room in active_rooms:
-            # המרת זמן מה-DB לאובייקט זמן של פייתון
-            start_dt = datetime.fromisoformat(room['start_time'].replace('Z', '+00:00'))
-            diff = datetime.now().astimezone() - start_dt.astimezone()
-            elapsed = diff.total_seconds() / 60
-            mins, secs = divmod(int(diff.total_seconds()), 60)
-            
-            if elapsed >= room['planned_duration'] and f"out_{room['id']}" not in st.session_state.notified_entries:
-                send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
-                st.session_state.notified_entries.add(f"out_{room['id']}")
-
-            st.subheader(f"📍 {room['room_name']} | {room['name']}")
-            
-            # עדכון אנשים משלמים (זמני לצורך חישוב)
-            paying = st.number_input("משלמים", 1, 50, room['paying_people'], key=f"pay_{room['id']}")
-            total, per_p = calculate_price_logic(room['total_people'], paying, elapsed)
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("⏱️ זמן", f"{mins:02d}:{secs:02d}")
-            c2.metric("💰 סה\"כ", f"₪{total:.2f}")
-            c3.metric("👤 לאדם", f"₪{per_p:.2f}")
-            
-            if st.button(f"💰 סיום ל-{room['name']}", key=f"end_{room['id']}"):
-                requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
-                send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
-                st.rerun()
-            st.divider()
-    else: st.info("אין חדרים פעילים.")
-
+                    # שליחת הנתונים ושמירת התגובה מהשרת במשתנה res
+                    res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
+                    
+                    if res.status_code in [200, 201]:
+                        # אם השמירה הצליחה - שלח טלגרם ורענן
+                        send_telegram(f"✅ {name} נכנסו ל-{actual_r}.")
+                        st.rerun()
+                    else:
+                        # אם השמירה נכשלה - תראה לי את השגיאה באדום!
+                        st.error(f"⚠️ תקלה בשמירה ל-Supabase: {res.status_code}")
+                        st.write("הודעת השגיאה המלאה:")
+                        st.code(res.text) # זה יראה לנו בדיוק מה חסר בטבלה
 with tab2:
     active_rooms_timer()
 
