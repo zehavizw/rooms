@@ -22,7 +22,6 @@ def format_duration_vertical(total_seconds):
     if total_mins >= 60:
         h = total_mins // 60
         m = total_mins % 60
-        # פורמט אנכי: בולד בולט, ופירוט מלא בשורה מתחתיו
         return f"## **{h:02d}:{m:02d}:{seconds:02d}** \n\n ({h} שע', {m} דק', {seconds} שנ')"
     else:
         return f"## **{total_mins:02d}:{seconds:02d}** \n\n ({total_mins} דק', {seconds} שנ')"
@@ -90,7 +89,7 @@ if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.success("עודכן!")
 
 st.divider()
-tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
+tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון מחיר"])
 
 with tab1:
     if 'web_bookings' in st.session_state:
@@ -129,16 +128,13 @@ with tab2:
             st.subheader(f"📍 {r['room_name']} | {r['name']} (נכנסו ב-{s_dt.strftime('%H:%M')})")
             
             if active:
-                pay = st.number_input("مشלמים", 1, 50, r['paying_people'], key=f"pay_{r['id']}")
+                pay = st.number_input("משלמים", 1, 50, r['paying_people'], key=f"pay_{r['id']}")
                 total, per = calculate_price_logic(r['total_people'], pay, diff.total_seconds()/60)
                 
-                c1, c2, c3 = st.columns([2, 1, 1]) # נותן לעמודה של הזמן קצת יותר רוחב
-                
-                # --- תצוגה אנכית ומסודרת ---
+                c1, c2, c3 = st.columns([2, 1, 1])
                 with c1:
                     st.write("⏱️ **זמן:**")
                     st.write(format_duration_vertical(diff.total_seconds()))
-                    
                 c2.metric("💰 **סה\"כ**", f"₪{total:.2f}")
                 c3.metric("👤 **לאדם**", f"₪{per:.2f}")
                 
@@ -153,10 +149,26 @@ with tab2:
     timer()
 
 with tab3:
-    st.subheader("🧮 מחשבון")
+    st.subheader("🧮 מחשבון מחיר מהיר")
+    
+    # הוספת שדה שם הלקוח
+    calc_name = st.text_input("👤 שם הלקוח (לבדיקה)", "לקוח כללי")
+    
     c1, c2, c3 = st.columns(3)
-    c_tot, c_pay, c_min = c1.number_input("סה\"כ איש", 1, 50, 4), c2.number_input("משלמים", 1, 50, 4), c3.number_input("דקות", 1, 600, 60)
-    t, p = calculate_price_logic(c_tot, c_pay, c_min)
-    st.metric("סה\"כ", f"₪{t:.2f}")
-    if st.button("📤 שלח לטלגרם"):
-        send_telegram(f"📝 מחשבון: {c_min} דק', {c_tot} איש. סה\"כ: ₪{t:.2f}")
+    with c1:
+        c_tot = st.number_input("סה\"כ אנשים בחדר", 1, 50, 4)
+    with c2:
+        c_pay = st.number_input("כמה משלמים בפועל", 1, 50, 4)
+    with c3:
+        c_min = st.number_input("זמן בדקות", 1, 600, 60)
+    
+    t_res, p_res = calculate_price_logic(c_tot, c_pay, c_min)
+    
+    st.divider()
+    col_res1, col_res2 = st.columns(2)
+    col_res1.metric("💰 סה\"כ לתשלום", f"₪{t_res:.2f}")
+    col_res2.metric("👤 מחיר לאדם משלם", f"₪{p_res:.2f}") # הוספת מחיר לאדם במחשבון
+    
+    if st.button("📤 שלח תוצאה לטלגרם", use_container_width=True):
+        send_telegram(f"📝 בדיקת מחיר עבור {calc_name}:\n👥 סה\"כ: {c_tot} איש\n💳 משלמים: {c_pay}\n⏱️ זמן: {c_min} דקות\n💵 סה\"כ: ₪{t_res:.2f}\n👤 לאדם: ₪{p_res:.2f}")
+        st.success("הבדיקה נשלחה לטלגרם!")
