@@ -15,16 +15,22 @@ def get_now():
     return datetime.now(IL_TZ)
 
 def format_duration_vertical(total_seconds):
-    """מחזירה מחרוזת מעוצבת אנכית ברורה ובלטת"""
-    total_mins = int(total_seconds // 60)
-    seconds = int(total_seconds % 60)
+    """מחשבת ומציגה שעות, דקות ושניות בצורה מדויקת ומסודרת"""
+    total_seconds = int(total_seconds)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
     
-    if total_mins >= 60:
-        h = total_mins // 60
-        m = total_mins % 60
-        return f"## **{h:02d}:{m:02d}:{seconds:02d}** \n\n ({h} שע', {m} דק', {seconds} שנ')"
+    # תצוגה של השעון הראשי (HH:MM:SS)
+    clock_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    
+    # תצוגת הפירוט בסוגריים
+    if hours > 0:
+        detail_str = f"({hours} שע', {minutes} דק', {seconds} שנ')"
     else:
-        return f"## **{total_mins:02d}:{seconds:02d}** \n\n ({total_mins} דק', {seconds} שנ')"
+        detail_str = f"({minutes} דק', {seconds} שנ')"
+        
+    return f"## **{clock_str}** \n\n {detail_str}"
 
 # --- פונקציות ליבה ---
 def get_source_headers():
@@ -89,7 +95,7 @@ if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.success("עודכן!")
 
 st.divider()
-tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון מחיר"])
+tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון"])
 
 with tab1:
     if 'web_bookings' in st.session_state:
@@ -150,25 +156,13 @@ with tab2:
 
 with tab3:
     st.subheader("🧮 מחשבון מחיר מהיר")
-    
-    # הוספת שדה שם הלקוח
     calc_name = st.text_input("👤 שם הלקוח (לבדיקה)", "לקוח כללי")
-    
     c1, c2, c3 = st.columns(3)
-    with c1:
-        c_tot = st.number_input("סה\"כ אנשים בחדר", 1, 50, 4)
-    with c2:
-        c_pay = st.number_input("כמה משלמים בפועל", 1, 50, 4)
-    with c3:
-        c_min = st.number_input("זמן בדקות", 1, 600, 60)
-    
+    c_tot, c_pay, c_min = c1.number_input("סה\"כ אנשים בחדר", 1, 50, 4), c2.number_input("משלמים", 1, 50, 4), c3.number_input("זמן בדקות", 1, 600, 60)
     t_res, p_res = calculate_price_logic(c_tot, c_pay, c_min)
-    
     st.divider()
     col_res1, col_res2 = st.columns(2)
     col_res1.metric("💰 סה\"כ לתשלום", f"₪{t_res:.2f}")
-    col_res2.metric("👤 מחיר לאדם משלם", f"₪{p_res:.2f}") # הוספת מחיר לאדם במחשבון
-    
+    col_res2.metric("👤 מחיר לאדם", f"₪{p_res:.2f}")
     if st.button("📤 שלח תוצאה לטלגרם", use_container_width=True):
-        send_telegram(f"📝 בדיקת מחיר עבור {calc_name}:\n👥 סה\"כ: {c_tot} איש\n💳 משלמים: {c_pay}\n⏱️ זמן: {c_min} דקות\n💵 סה\"כ: ₪{t_res:.2f}\n👤 לאדם: ₪{p_res:.2f}")
-        st.success("הבדיקה נשלחה לטלגרם!")
+        send_telegram(f"📝 בדיקה עבור {calc_name}:\n⏱️ זמן: {c_min} דק'\n💵 סה\"כ: ₪{t_res:.2f}\n👤 לאדם: ₪{p_res:.2f}")
