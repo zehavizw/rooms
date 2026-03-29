@@ -15,7 +15,6 @@ def get_now():
     return datetime.now(IL_TZ)
 
 def format_simple_clock(total_seconds):
-    """מחזירה רק את השעון בפורמט נקי HH:MM:SS"""
     total_seconds = int(total_seconds)
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
@@ -94,11 +93,14 @@ with tab1:
         for b in st.session_state.web_bookings:
             bid = str(b['id'])
             if bid in a_ids: continue
-            # הצגת זמן ההזמנה המקורי בכותרת של לוח הזמנות
-            duration_orig = b.get('duration_minutes', 60)
-            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({duration_orig} דק') | {b.get('room',{}).get('name')}"):
-                p = st.number_input("אנשים", 1, 50, 2, key=f"p_{bid}")
-                d = st.number_input("משך זמן (דקות)", 15, 300, duration_orig, key=f"d_{bid}")
+            
+            # משיכת הנתונים האמיתיים מההזמנה
+            orig_people = b.get('total_people', 2)
+            orig_duration = b.get('duration_minutes', 60)
+            
+            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דק') | {b.get('room',{}).get('name')}"):
+                p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
+                d = st.number_input("משך זמן (דקות)", 15, 300, int(orig_duration), key=f"d_{bid}")
                 r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
                 if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
                     requests.post(f"{MY_URL}/rest/v1/active_sessions", json={"booking_id":bid,"name":b.get('customer_name'),"room_name":r_act,"start_time":get_now().isoformat(),"total_people":p,"paying_people":p,"planned_duration":d,"status":"active"}, headers=get_my_headers())
@@ -125,7 +127,6 @@ with tab2:
                 diff = get_now() - s_dt
                 active = True
             
-            # הצגת זמן הכניסה וזמן ההזמנה המקורי בכותרת
             st.subheader(f"📍 {r['room_name']} | {r['name']} (נכנסו ב-{s_dt.strftime('%H:%M')} | הוזמן ל-{planned} דק')")
             
             if active:
