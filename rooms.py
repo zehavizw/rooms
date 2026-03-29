@@ -134,7 +134,6 @@ with tab1:
                     res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
                     
                     if res.status_code in [200, 201]:
-                        # --- עדכון הודעת הכניסה בטלגרם ---
                         msg_in = f"✅ כניסה חדשה:\n👤 שם: {name}\n📍 חדר: {actual_r}\n👥 אנשים: {p}\n⏳ זמן מתוכנן: {d} דקות"
                         send_telegram(msg_in)
                         st.rerun()
@@ -162,6 +161,9 @@ with tab2:
             for room in display_rooms:
                 start_dt = datetime.fromisoformat(room['start_time'].replace('Z', '+00:00'))
                 
+                # יצירת מחרוזת יפה לשעת הכניסה (לדוגמה: 21:30)
+                start_time_str = start_dt.astimezone().strftime("%H:%M")
+                
                 if room.get('status') == 'finished' and room.get('end_time'):
                     end_dt = datetime.fromisoformat(room['end_time'].replace('Z', '+00:00'))
                     diff = end_dt - start_dt
@@ -178,7 +180,8 @@ with tab2:
                     send_telegram(f"⏰ זמן נגמר!\nהקבוצה של {room['name']} סיימה {planned} דקות.")
                     st.session_state.notified_entries.add(f"out_{room['id']}")
 
-                st.subheader(f"📍 {room['room_name']} | {room['name']} (נקבע ל-{planned} דק')")
+                # הוספת שעת הכניסה לכותרת
+                st.subheader(f"📍 {room['room_name']} | {room['name']} (נכנסו ב-{start_time_str} | נקבע ל-{planned} דק')")
                 
                 if is_active:
                     paying = st.number_input("משלמים", 1, 50, room['paying_people'], key=f"pay_{room['id']}")
@@ -197,7 +200,6 @@ with tab2:
                         }
                         requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
                         
-                        # --- עדכון הודעת היציאה בטלגרם ---
                         msg_out = f"💸 סיום חדר:\n👤 שם: {room['name']}\n⏱️ זמן בפועל: {mins:02d}:{secs:02d}\n💰 לתשלום: ₪{total:.2f}"
                         send_telegram(msg_out)
                         
