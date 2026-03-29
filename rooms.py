@@ -14,7 +14,6 @@ MY_KEY = st.secrets['MY_KEY']
 IL_TZ = ZoneInfo("Asia/Jerusalem")
 
 def get_now():
-    """מחזירה את השעה הנוכחית והמדויקת בישראל, מתעלמת מהשעון של השרת"""
     return datetime.now(IL_TZ)
 
 # --- פונקציות ליבה ותקשורת ---
@@ -59,7 +58,6 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
 
 def sync_and_cleanup(selected_date):
     now = get_now()
-    
     if selected_date == now.date() and now.hour < 6:
         query_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         is_current_shift = True
@@ -72,7 +70,6 @@ def sync_and_cleanup(selected_date):
     if res_source.status_code != 200: return []
     
     source_bookings = res_source.json()
-    
     if is_current_shift:
         source_ids = [str(b['id']) for b in source_bookings]
         res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
@@ -80,22 +77,17 @@ def sync_and_cleanup(selected_date):
             for room in res_my.json():
                 if str(room['booking_id']) not in source_ids and room.get('status', 'active').startswith('active'):
                     requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
-                    
     return source_bookings
 
 def get_shift_date(iso_time_str):
     if not iso_time_str: return None
     try:
         dt = datetime.fromisoformat(iso_time_str.replace('Z', '+00:00')).astimezone(IL_TZ)
-        if dt.hour < 6:
-            return (dt - timedelta(days=1)).date()
+        if dt.hour < 6: return (dt - timedelta(days=1)).date()
         return dt.date()
-    except:
-        return None
+    except: return None
 
-# --- אתחול משתנים ---
-if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
-
+# --- ממשק האפליקציה ---
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - זיכרון קבוע")
 
@@ -107,10 +99,9 @@ with col2:
     st.write("")
     if st.button("🔄 סנכרן נתונים", use_container_width=True):
         st.session_state.web_bookings = sync_and_cleanup(selected_date)
-        st.success(f"הנתונים ל-{selected_date.strftime('%d/%m/%Y')} עודכנו!")
+        st.success("עודכן!")
 
 st.divider()
-
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
 with tab1:
@@ -138,14 +129,10 @@ with tab1:
                         "status": "active" 
                     }
                     res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
-                    
                     if res.status_code in [200, 201]:
                         msg_in = f"✅ כניסה חדשה:\n👤 שם: {name}\n📍 חדר: {actual_r}\n👥 אנשים: {p}\n⏳ זמן מתוכנן: {d} דקות"
                         send_telegram(msg_in)
                         st.rerun()
-                    else:
-                        st.error(f"⚠️ תקלה בשמירה: {res.status_code}")
-                        st.code(res.text)
 
 with tab2:
     view_filter = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
@@ -155,7 +142,6 @@ with tab2:
     def active_rooms_timer():
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         all_rooms = res.json() if res.status_code == 200 else []
-
         filtered_by_date = [r for r in all_rooms if get_shift_date(r['start_time']) == selected_date]
 
         if view_filter == "⚡ עכשיו בפעילות":
@@ -165,7 +151,6 @@ with tab2:
 
         if display_rooms:
             for room in display_rooms:
-                # ממיר את הזמן שנשמר במסד לזמן ישראל כדי שההצגה תהיה נכונה
                 start_dt = datetime.fromisoformat(room['start_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
                 start_time_str = start_dt.strftime("%H:%M")
                 
@@ -181,9 +166,7 @@ with tab2:
                 mins, secs = divmod(int(diff.total_seconds()), 60)
                 planned = room.get('planned_duration', 60)
                 
-                if is_active and elapsed >= planned and room.get('status') == 'active':
-                    send_telegram(f"⏰ זמן נגמר!\nהקבוצה של {room['name']} סיימה {planned} דקות.")
-                    requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json={"status": "active_notified"}, headers=get_my_headers())
+                # --- כאן הסרתי את שליחת הטלגרם! גוגל יטפל בזה מעכשיו ---
 
                 st.subheader(f"📍 {room['room_name']} | {room['name']} (נכנסו ב-{start_time_str} | נקבע ל-{planned} דק')")
                 
@@ -203,42 +186,23 @@ with tab2:
                             "paying_people": paying
                         }
                         requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
-                        
                         msg_out = f"💸 סיום חדר:\n👤 שם: {room['name']}\n⏱️ זמן בפועל: {mins:02d}:{secs:02d}\n💰 לתשלום: ₪{total:.2f}"
                         send_telegram(msg_out)
-                        
                         st.rerun()
                 else:
                     total, per_p = calculate_price_logic(room['total_people'], room['paying_people'], elapsed)
-                    st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} (מתוך {planned} דק') | כסף שנגבה: ₪{total:.2f}")
+                    st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} | כסף שנגבה: ₪{total:.2f}")
                     
                     c_ret1, c_ret2 = st.columns(2)
-                    
                     if c_ret1.button("🔄 התחל מחדש", key=f"ret_new_{room['id']}"):
-                        update_data = {
-                            "status": "active", 
-                            "start_time": get_now().isoformat(),
-                            "end_time": None
-                        }
-                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
+                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json={"status": "active", "start_time": get_now().isoformat(), "end_time": None}, headers=get_my_headers())
                         st.rerun()
-                        
-                    if c_ret2.button("▶️ המשך מאותה נקודה", key=f"ret_cont_{room['id']}"):
-                        active_duration = end_dt - start_dt
-                        new_start = get_now() - active_duration
-                        
-                        update_data = {
-                            "status": "active", 
-                            "start_time": new_start.isoformat(),
-                            "end_time": None
-                        }
-                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
+                    if c_ret2.button("▶️ המשך", key=f"ret_cont_{room['id']}"):
+                        new_start = get_now() - (end_dt - start_dt)
+                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json={"status": "active", "start_time": new_start.isoformat(), "end_time": None}, headers=get_my_headers())
                         st.rerun()
-                        
                 st.divider()
-        else: 
-            st.info("אין נתונים לתאריך זה.")
-
+        else: st.info("אין נתונים.")
     active_rooms_timer()
 
 with tab3:
