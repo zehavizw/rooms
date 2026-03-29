@@ -50,7 +50,6 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     return total_bill, per_paying
 
 def sync_and_cleanup():
-    """מסנכרן מהמקור ומנקה רק חדרים פעילים שנמחקו"""
     today = datetime.now().strftime("%Y-%m-%d")
     res_source = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), 
                               params={"booking_date": f"eq.{today}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
@@ -120,7 +119,6 @@ with tab2:
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         all_rooms = res.json() if res.status_code == 200 else []
 
-        # סינון לפי בחירה
         if view_filter == "⚡ עכשיו בפעילות":
             display_rooms = [r for r in all_rooms if r.get('status', 'active') == 'active']
         else:
@@ -140,12 +138,14 @@ with tab2:
 
                 elapsed = diff.total_seconds() / 60
                 mins, secs = divmod(int(diff.total_seconds()), 60)
+                planned = room.get('planned_duration', 60)
                 
-                if is_active and elapsed >= room['planned_duration'] and f"out_{room['id']}" not in st.session_state.notified_entries:
+                if is_active and elapsed >= planned and f"out_{room['id']}" not in st.session_state.notified_entries:
                     send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
                     st.session_state.notified_entries.add(f"out_{room['id']}")
 
-                st.subheader(f"📍 {room['room_name']} | {room['name']}")
+                # הוספנו כאן את התצוגה של "נקבע ל-X דקות" בכותרת החדר
+                st.subheader(f"📍 {room['room_name']} | {room['name']} (נקבע ל-{planned} דק')")
                 
                 if is_active:
                     paying = st.number_input("משלמים", 1, 50, room['paying_people'], key=f"pay_{room['id']}")
@@ -166,13 +166,12 @@ with tab2:
                         send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
                         st.rerun()
                 else:
-                    # תצוגה של חדר שהסתיים
                     total, per_p = calculate_price_logic(room['total_people'], room['paying_people'], elapsed)
-                    st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} | כסף שנגבה: ₪{total:.2f}")
+                    # הוספנו את המידע גם כאן כדי שתראי אם הם חרגו מהזמן
+                    st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} (מתוך {planned} דק') | כסף שנגבה: ₪{total:.2f}")
                     
                     c_ret1, c_ret2 = st.columns(2)
                     
-                    # אופציה 1: להתחיל מחדש מאפס
                     if c_ret1.button("🔄 התחל מחדש", key=f"ret_new_{room['id']}"):
                         update_data = {
                             "status": "active", 
@@ -182,7 +181,6 @@ with tab2:
                         requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
                         st.rerun()
                         
-                    # אופציה 2: להמשיך מאותה הנקודה שעצרנו בה (מקזז את הזמן שהחדר עמד ריק)
                     if c_ret2.button("▶️ המשך מאותה נקודה", key=f"ret_cont_{room['id']}"):
                         now_dt = datetime.now().astimezone()
                         active_duration = end_dt - start_dt
