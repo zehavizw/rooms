@@ -45,8 +45,7 @@ if 'bookings' not in st.session_state:
     st.session_state.bookings = []
 
 # תפריט עליון באייפון
-tab1, tab2 = st.tabs(["📱 ניהול חדרים", "📅 לו"ז הזמנות"])
-
+tab1, tab2 = st.tabs(["📱 ניהול חדרים", '📅 לו"ז הזמנות'])
 # --- לשונית 1: ניהול חדרים ---
 with tab1:
     st.header("מצב חדרים נוכחי")
