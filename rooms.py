@@ -18,7 +18,12 @@ def get_source_headers():
     return {"apikey": SOURCE_KEY, "Authorization": f"Bearer {token}"}
 
 def get_my_headers():
-    return {"apikey": MY_KEY, "Authorization": f"Bearer {MY_KEY}", "Content-Type": "application/json", "Prefer": "return=representation"}
+    return {
+        "apikey": MY_KEY, 
+        "Authorization": f"Bearer {MY_KEY}", 
+        "Content-Type": "application/json", 
+        "Prefer": "return=representation"
+    }
 
 def send_telegram(msg):
     token = st.secrets.get("TELEGRAM_TOKEN")
@@ -48,7 +53,6 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
 def sync_and_cleanup():
     """מסנכרן מהמקור ומנקה מהמסד הפרטי את מה שנמחק"""
     today = datetime.now().strftime("%Y-%m-%d")
-    # 1. משיכה מהמקור
     res_source = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), 
                               params={"booking_date": f"eq.{today}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
     if res_source.status_code != 200: return []
@@ -56,14 +60,11 @@ def sync_and_cleanup():
     source_bookings = res_source.json()
     source_ids = [str(b['id']) for b in source_bookings]
     
-    # 2. משיכה מהמסד הפרטי שלך וניקוי
     res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
     if res_my.status_code == 200:
         for room in res_my.json():
             if str(room['booking_id']) not in source_ids:
                 requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
-                send_telegram(f"🗑️ הזמנה של {room['name']} נמחקה מהמקור והוסרה.")
-                
     return source_bookings
 
 # --- אתחול משתנים ---
@@ -80,25 +81,21 @@ with tab1:
         st.success("סונכרן ובוצע ניקוי!")
 
     if 'web_bookings' in st.session_state:
-        # בדיקה מי כבר פעיל ב-Database
         res_active = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         active_ids = [str(a['booking_id']) for a in res_active.json()] if res_active.status_code == 200 else []
 
         for b in st.session_state.web_bookings:
-            # --- כאן מגדירים את המשתנים שחסרו לך ---
-            bid = str(b['id']) 
+            bid = str(b['id'])
+            if bid in active_ids: continue 
+            
             name = b.get('customer_name', 'לקוח')
             room_name = b.get('room', {}).get('name', 'לא הוקצה')
             
-            # אם הם כבר פעילים, אל תציג אותם בלוח
-            if bid in active_ids: continue 
-
             with st.expander(f"⏳ {name} | {b.get('start_time')} | {room_name}"):
                 p = st.number_input("אנשים", 1, 50, 2, key=f"p_{bid}")
                 d = st.number_input("דקות", 15, 300, 60, key=f"d_{bid}")
                 actual_r = st.text_input("חדר בפועל", value=room_name, key=f"r_edit_{bid}")
                 
-                # הכפתור עם ה-Debug שהוספנו
                 if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
                     data = {
                         "booking_id": bid, "name": name, "room_name": actual_r,
@@ -111,14 +108,46 @@ with tab1:
                         send_telegram(f"✅ {name} נכנסו ל-{actual_r}.")
                         st.rerun()
                     else:
-                        st.error(f"⚠️ תקלה בשמירה ל-Supabase: {res.status_code}")
-                        st.write("הודעת השגיאה המלאה:")
-                        st.code(res.text)with tab2:
+                        st.error(f"⚠️ תקלה בשמירה: {res.status_code}")
+                        st.code(res.text)
+
+with tab2:
+    @st.fragment(run_every=5)
+    def active_rooms_timer():
+        res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
+        active_rooms = res.json() if res.status_code == 200 else []
+
+        if active_rooms:
+            for room in active_rooms:
+                start_dt = datetime.fromisoformat(room['start_time'].replace('Z', '+00:00'))
+                diff = datetime.now().astimezone() - start_dt.astimezone()
+                elapsed = diff.total_seconds() / 60
+                mins, secs = divmod(int(diff.total_seconds()), 60)
+                
+                if elapsed >= room['planned_duration'] and f"out_{room['id']}" not in st.session_state.notified_entries:
+                    send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
+                    st.session_state.notified_entries.add(f"out_{room['id']}")
+
+                st.subheader(f"📍 {room['room_name']} | {room['name']}")
+                paying = st.number_input("משלמים", 1, 50, room['paying_people'], key=f"pay_{room['id']}")
+                total, per_p = calculate_price_logic(room['total_people'], paying, elapsed)
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("⏱️ זמן", f"{mins:02d}:{secs:02d}")
+                c2.metric("💰 סה\"כ", f"₪{total:.2f}")
+                c3.metric("👤 לאדם", f"₪{per_p:.2f}")
+                
+                if st.button(f"💰 סיום ל-{room['name']}", key=f"end_{room['id']}"):
+                    requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
+                    send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
+                    st.rerun()
+                st.divider()
+        else: st.info("אין חדרים פעילים.")
+
     active_rooms_timer()
 
 with tab3:
     st.subheader("🧮 מחשבון")
-    # ... (שאר קוד המחשבון שלך נשאר זהה)
     calc_name = st.text_input("שם הלקוח", "כללי")
     c1, c2, c3 = st.columns(3)
     c_tot = c1.number_input("סה\"כ איש", 1, 50, 4)
@@ -126,6 +155,8 @@ with tab3:
     c_min = c3.number_input("דקות", 1, 600, 60)
     t_res, p_res = calculate_price_logic(c_tot, c_pay, c_min)
     st.divider()
-    st.metric("סה\"כ", f"₪{t_res:.2f}"); st.metric("לאדם", f"₪{p_res:.2f}")
+    st.metric("סה\"כ", f"₪{t_res:.2f}")
+    st.metric("לאדם", f"₪{p_res:.2f}")
     if st.button("📤 שלח לטלגרם"):
-        send_telegram(f"📝 בדיקה ל-{calc_name}: {c_min} דק', {c_tot} איש. סה\"כ: ₪{t_res:.2f}"); st.success("נשלח!")
+        send_telegram(f"📝 בדיקה ל-{calc_name}: {c_min} דק', {c_tot} איש. סה\"כ: ₪{t_res:.2f}")
+        st.success("נשלח!")
