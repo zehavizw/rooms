@@ -61,12 +61,18 @@ def calculate_price(total_p, pay_p, mins):
 
 def sync_from_source():
     headers = get_source_headers()
-    # מושך 50 אחרונים בלי פילטר תאריך קשיח כדי למנוע טעויות שעון
-    res = requests.get(f"{S_URL}/rest/v1/bookings?select=*,room:rooms(*)&order=created_at.desc&limit=50", headers=headers, timeout=10)
+    # אנחנו מבקשים את כל ההזמנות בלי שום סינון, כדי לראות אם משהו בכלל עובר
+    res = requests.get(f"{S_URL}/rest/v1/bookings?select=*", headers=headers, timeout=10)
+    
     if res.status_code != 200:
-        st.error(f"שגיאת סנכרון: {res.status_code}")
+        # כאן האפליקציה תגיד לנו בדיוק מה הבעיה (Password wrong, Expired, וכו')
+        st.error(f"⚠️ שגיאה מהשרת: {res.status_code} - {res.text}")
         return []
-    return res.json()
+        
+    data = res.json()
+    if not data:
+        st.warning("התחברתי בהצלחה, אבל הטבלה במערכת המקורית פשוט ריקה!")
+    return data
 
 # --- 3. ממשק האפליקציה ---
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
