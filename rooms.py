@@ -49,20 +49,35 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     per_paying = total_bill / paying_people if paying_people > 0 else 0
     return total_bill, per_paying
 
-def sync_and_cleanup():
-    today = datetime.now().strftime("%Y-%m-%d")
+def sync_and_cleanup(selected_date):
+    """מסנכרן לפי תאריך נבחר. מנקה מחיקות רק אם מסתכלים על משמרת נוכחית"""
+    now = datetime.now()
+    
+    # חוק שעון משמרת (לפני 6 בבוקר שייך לאתמול) - מופעל רק אם בחרנו את "היום" בלוח השנה
+    if selected_date == now.date() and now.hour < 6:
+        query_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        is_current_shift = True
+    else:
+        query_date = selected_date.strftime("%Y-%m-%d")
+        # בודק האם התאריך שנבחר הוא התאריך של המשמרת הנוכחית
+        is_current_shift = (query_date == now.strftime("%Y-%m-%d")) or (now.hour < 6 and query_date == (now - timedelta(days=1)).strftime("%Y-%m-%d"))
+
     res_source = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), 
-                              params={"booking_date": f"eq.{today}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
+                              params={"booking_date": f"eq.{query_date}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
     if res_source.status_code != 200: return []
     
     source_bookings = res_source.json()
-    source_ids = [str(b['id']) for b in source_bookings]
     
-    res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
-    if res_my.status_code == 200:
-        for room in res_my.json():
-            if str(room['booking_id']) not in source_ids and room.get('status', 'active') == 'active':
-                requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
+    # מנגנון הניקוי ירוץ *רק* אם אנחנו מסתכלים על המשמרת של עכשיו
+    # (כדי שלא נמחק בטעות חדרים פעילים רק כי הסתכלנו על ההזמנות של אתמול)
+    if is_current_shift:
+        source_ids = [str(b['id']) for b in source_bookings]
+        res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
+        if res_my.status_code == 200:
+            for room in res_my.json():
+                if str(room['booking_id']) not in source_ids and room.get('status', 'active') == 'active':
+                    requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
+                    
     return source_bookings
 
 # --- אתחול משתנים ---
@@ -74,9 +89,16 @@ st.title("🎤 ניהול חכם - זיכרון קבוע")
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
 with tab1:
-    if st.button("🔄 סנכרן ונקה"):
-        st.session_state.web_bookings = sync_and_cleanup()
-        st.success("סונכרן ובוצע ניקוי!")
+    # --- הוספת לוח השנה ---
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        selected_date = st.date_input("📅 בחר תאריך להצגה", datetime.now().date())
+    with col2:
+        st.write("") # מרווח כדי ליישר את הכפתור
+        st.write("")
+        if st.button("🔄 סנכרן נתונים", use_container_width=True):
+            st.session_state.web_bookings = sync_and_cleanup(selected_date)
+            st.success(f"הנתונים ל-{selected_date.strftime('%d/%m/%Y')} עודכנו!")
 
     if 'web_bookings' in st.session_state:
         res_active = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
@@ -144,7 +166,6 @@ with tab2:
                     send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
                     st.session_state.notified_entries.add(f"out_{room['id']}")
 
-                # הוספנו כאן את התצוגה של "נקבע ל-X דקות" בכותרת החדר
                 st.subheader(f"📍 {room['room_name']} | {room['name']} (נקבע ל-{planned} דק')")
                 
                 if is_active:
@@ -167,7 +188,6 @@ with tab2:
                         st.rerun()
                 else:
                     total, per_p = calculate_price_logic(room['total_people'], room['paying_people'], elapsed)
-                    # הוספנו את המידע גם כאן כדי שתראי אם הם חרגו מהזמן
                     st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} (מתוך {planned} דק') | כסף שנגבה: ₪{total:.2f}")
                     
                     c_ret1, c_ret2 = st.columns(2)
