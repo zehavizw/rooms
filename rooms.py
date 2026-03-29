@@ -3,12 +3,12 @@ import requests
 from datetime import datetime
 import time
 
-# הגדרות בסיס
+# --- הגדרות חיבור ---
 BASE_URL = st.secrets['SUPABASE_URL']
 BOOKINGS_URL = f"{BASE_URL}/rest/v1/bookings"
 AUTH_URL = f"{BASE_URL}/auth/v1/token?grant_type=refresh_token"
 
-# --- פונקציות עזר ---
+# --- פונקציות ליבה ---
 
 def get_fresh_token():
     payload = {"refresh_token": st.secrets["REFRESH_TOKEN"]}
@@ -27,11 +27,13 @@ def send_telegram(msg):
         except: pass
 
 def calculate_price_logic(total_people, paying_people, elapsed_minutes):
+    # מחירון לפי כמות אנשים
     if total_people == 1: rates = [50, 40, 30]
     elif 2 <= total_people <= 4: rates = [45, 35, 25]
     elif 5 <= total_people <= 9: rates = [40, 30, 20]
     else: rates = [35, 25, 15]
 
+    # הלוגיקה שלך: חלק משעה מחושב לפי המחיר של השעה שלפני
     if elapsed_minutes <= 120:
         price_per_person = (elapsed_minutes / 60) * rates[0]
     elif elapsed_minutes <= 180:
@@ -43,20 +45,24 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     per_paying = total_bill / paying_people if paying_people > 0 else 0
     return total_bill, per_paying
 
-# --- אתחול זיכרון המערכת ---
+# --- אתחול משתני מערכת ---
 if 'rooms_active' not in st.session_state: st.session_state.rooms_active = {}
 if 'finished_bookings' not in st.session_state: st.session_state.finished_bookings = set()
 if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
 
-# --- ממשק ---
+# --- ממשק משתמש ---
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - קריוקי")
 
-# כפתור חירום לניקוי שגיאות זיכרון
-if st.sidebar.button("🗑️ נקה הכל (איפוס שגיאות)"):
-    st.session_state.rooms_active = {}
-    st.session_state.finished_bookings = set()
-    st.rerun()
+# תפריט צד לאיפוס וניקוי שגיאות
+with st.sidebar:
+    st.header("כלי מערכת")
+    if st.button("🗑️ איפוס זיכרון (למקרה של שגיאה)"):
+        st.session_state.rooms_active = {}
+        st.session_state.finished_bookings = set()
+        st.session_state.notified_entries = set()
+        st.success("הזיכרון נוקה בהצלחה!")
+        st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
@@ -79,9 +85,9 @@ with tab1:
             sched_time = b.get('start_time', '--:--')
             bid = str(b['id'])
             
-            # התראת כניסה לטלגרם
+            # בדיקה אם הגיע זמן כניסה
             if sched_time <= now_str and bid not in st.session_state.notified_entries and bid not in st.session_state.rooms_active:
-                send_telegram(f"🔔 זהבי, זמן כניסה! הקבוצה של {name} אמורה להיכנס ({sched_time}).")
+                send_telegram(f"🔔 זהבי, הגיע הזמן! {name} אמורים להיכנס ({sched_time}).")
                 st.session_state.notified_entries.add(bid)
 
             status = "🏁 נגמר" if bid in st.session_state.finished_bookings else ("🔵 בפנים" if bid in st.session_state.rooms_active else "")
@@ -101,14 +107,17 @@ with tab1:
 with tab2:
     if st.session_state.rooms_active:
         for rid, data in list(st.session_state.rooms_active.items()):
+            # הגנה מפני KeyError: אם המפתח 'start' לא קיים, נדלג על החדר הזה
+            if 'start' not in data:
+                continue
+                
             diff = datetime.now() - data['start']
             elapsed_min = diff.total_seconds() / 60
-            total_sec = int(diff.total_seconds())
-            mins, secs = divmod(total_sec, 60)
+            mins, secs = divmod(int(diff.total_seconds()), 60)
             
-            # בדיקה אם עבר זמן האירוח המתוכנן (שליחת הודעת יציאה)
-            if elapsed_min >= data['planned_duration'] and f"out_{rid}" not in st.session_state.notified_entries:
-                send_telegram(f"⏰ זמן נגמר! {data['name']} צריכים לצאת (עברו {data['planned_duration']} דקות).")
+            # בדיקת סיום זמן מתוכנן
+            if elapsed_min >= data.get('planned_duration', 60) and f"out_{rid}" not in st.session_state.notified_entries:
+                send_telegram(f"⏰ זמן נגמר! {data['name']} צריכים לצאת.")
                 st.session_state.notified_entries.add(f"out_{rid}")
 
             st.subheader(f"בחדר: {data['name']}")
@@ -128,7 +137,7 @@ with tab2:
                 st.rerun()
             st.divider()
         
-        # ריענון אוטומטי כל 5 שניות כדי שהטיימר והמחיר ירוצו
+        # ריענון אוטומטי כל 5 שניות
         time.sleep(5)
         st.rerun()
     else:
