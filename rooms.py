@@ -43,13 +43,20 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     per_paying = total_bill / paying_people if paying_people > 0 else 0
     return total_bill, per_paying
 
-# --- אתחול משתנים ---
+# --- אתחול זיכרון המערכת ---
 if 'rooms_active' not in st.session_state: st.session_state.rooms_active = {}
 if 'finished_bookings' not in st.session_state: st.session_state.finished_bookings = set()
+if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
 
 # --- ממשק ---
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - קריוקי")
+
+# כפתור חירום לניקוי שגיאות זיכרון
+if st.sidebar.button("🗑️ נקה הכל (איפוס שגיאות)"):
+    st.session_state.rooms_active = {}
+    st.session_state.finished_bookings = set()
+    st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
@@ -66,18 +73,29 @@ with tab1:
                 st.success("הזמנות עודכנו!")
 
     if 'web_bookings' in st.session_state:
+        now_str = datetime.now().strftime("%H:%M")
         for b in st.session_state.web_bookings:
             name = b.get('customer_name', 'לקוח')
+            sched_time = b.get('start_time', '--:--')
             bid = str(b['id'])
-            status = "🏁 נגמר" if bid in st.session_state.finished_bookings else ("🔵 בפנים" if bid in st.session_state.rooms_active else "")
             
-            with st.expander(f"{status} {name} | {b.get('start_time')}"):
+            # התראת כניסה לטלגרם
+            if sched_time <= now_str and bid not in st.session_state.notified_entries and bid not in st.session_state.rooms_active:
+                send_telegram(f"🔔 זהבי, זמן כניסה! הקבוצה של {name} אמורה להיכנס ({sched_time}).")
+                st.session_state.notified_entries.add(bid)
+
+            status = "🏁 נגמר" if bid in st.session_state.finished_bookings else ("🔵 בפנים" if bid in st.session_state.rooms_active else "")
+            with st.expander(f"{status} {name} | {sched_time}"):
                 if bid not in st.session_state.rooms_active and bid not in st.session_state.finished_bookings:
                     p_count = st.number_input("אנשים", 1, 50, 2, key=f"p_{bid}")
+                    duration = st.number_input("זמן (דקות)", 15, 300, 60, key=f"d_{bid}")
                     if st.button("🚀 כניסה", key=f"btn_{bid}"):
                         st.session_state.rooms_active[bid] = {
-                            "name": name, "start": datetime.now(), "total_people": p_count, "paying_people": p_count
+                            "name": name, "start": datetime.now(), 
+                            "total_people": p_count, "paying_people": p_count,
+                            "planned_duration": duration
                         }
+                        send_telegram(f"✅ {name} נכנסו. התראה תישלח בעוד {duration} דקות.")
                         st.rerun()
 
 with tab2:
@@ -85,16 +103,23 @@ with tab2:
         for rid, data in list(st.session_state.rooms_active.items()):
             diff = datetime.now() - data['start']
             elapsed_min = diff.total_seconds() / 60
-            mins, secs = divmod(int(diff.total_seconds()), 60)
+            total_sec = int(diff.total_seconds())
+            mins, secs = divmod(total_sec, 60)
             
+            # בדיקה אם עבר זמן האירוח המתוכנן (שליחת הודעת יציאה)
+            if elapsed_min >= data['planned_duration'] and f"out_{rid}" not in st.session_state.notified_entries:
+                send_telegram(f"⏰ זמן נגמר! {data['name']} צריכים לצאת (עברו {data['planned_duration']} דקות).")
+                st.session_state.notified_entries.add(f"out_{rid}")
+
             st.subheader(f"בחדר: {data['name']}")
-            data['paying_people'] = st.number_input("משלמים", 1, 50, data['paying_people'], key=f"pay_{rid}")
+            data['paying_people'] = st.number_input("משלמים בפועל", 1, 50, data['paying_people'], key=f"pay_{rid}")
             
             total_p, per_p = calculate_price_logic(data['total_people'], data['paying_people'], elapsed_min)
             
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             c1.metric("⏱️ זמן", f"{mins:02d}:{secs:02d}")
             c2.metric("💰 סה\"כ", f"₪{total_p:.2f}")
+            c3.metric("👤 לאדם", f"₪{per_p:.2f}")
             
             if st.button("💰 סיום ותשלום", key=f"end_{rid}"):
                 send_telegram(f"💸 {data['name']} סיימו. נגבה: ₪{total_p:.2f}")
@@ -103,8 +128,8 @@ with tab2:
                 st.rerun()
             st.divider()
         
-        # הטריק של הטיימר: מרענן את הדף כל 10 שניות כדי לעדכן שעון ומחיר
-        time.sleep(10)
+        # ריענון אוטומטי כל 5 שניות כדי שהטיימר והמחיר ירוצו
+        time.sleep(5)
         st.rerun()
     else:
         st.info("אין חדרים פעילים.")
