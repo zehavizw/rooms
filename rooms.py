@@ -1,14 +1,13 @@
 import streamlit as st
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import threading
 
-# טעינת נתונים מהכספת (Secrets)
-URL = f"{st.secrets.get('SUPABASE_URL', '')}/rest/v1/bookings"
+# חיבור לכספת
+URL = f"{st.secrets['SUPABASE_URL']}/rest/v1/bookings"
 HEADERS = {
-    "apikey": st.secrets.get("SUPABASE_KEY", ""),
-    "Authorization": st.secrets.get("SUPABASE_AUTH", ""),
+    "apikey": st.secrets["SUPABASE_KEY"],
     "Content-Type": "application/json"
 }
 
@@ -29,44 +28,43 @@ def schedule_msg(msg, delay_minutes):
     threading.Thread(target=wait_and_send).start()
 
 def calculate_price_logic(total_people, paying_people, elapsed_minutes):
-    # מחירון לפי כמות אנשים כוללת (בשביל לקבוע את התעריף)
+    # מחירון לפי כמות אנשים (1, 2-4, 5-9, 10+)
     if total_people == 1: rates = [50, 40, 30]
     elif 2 <= total_people <= 4: rates = [45, 35, 25]
     elif 5 <= total_people <= 9: rates = [40, 30, 20]
-    else: rates = [35, 25, 15] # 10+ אנשים
+    else: rates = [35, 25, 15]
 
-    # לוגיקת החישוב שלך: חלק משעה מחושב לפי השעה שלפני
-    # 0-120 דקות (שעתיים ראשונות) מחושבות לפי תעריף שעה 1
-    if elapsed_minutes <= 120:
+    # לוגיקה: חלק משעה מחושב לפי התעריף של השעה שלפני
+    if elapsed_minutes <= 120: # שעתיים ראשונות
         price_per_person = (elapsed_minutes / 60) * rates[0]
-    # 121-180 דקות (השעה השלישית) מחושבות לפי תעריף שעה 2
-    elif elapsed_minutes <= 180:
+    elif elapsed_minutes <= 180: # שעה שלישית
         price_per_person = (120/60 * rates[0]) + ((elapsed_minutes - 120) / 60 * rates[1])
-    # 181+ דקות (מהשעה הרביעית) מחושבות לפי תעריף שעה 3
-    else:
+    else: # שעה רביעית ואילך
         price_per_person = (120/60 * rates[0]) + (60/60 * rates[1]) + ((elapsed_minutes - 180) / 60 * rates[2])
     
     total_bill = price_per_person * total_people
     price_per_paying = total_bill / paying_people if paying_people > 0 else 0
-    
     return total_bill, price_per_paying
 
 # --- ממשק האפליקציה ---
 
-st.set_page_config(page_title="קריוקי - ניהול חכם", layout="centered")
-st.title("🎤 מרכז בקרה - חדרי קריוקי")
+st.set_page_config(page_title="קריוקי זהבי", layout="centered")
+st.title("🎤 ניהול חכם - קריוקי")
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון ידני"])
 
 with tab1:
     if st.button("🔄 סנכרן מהאתר"):
         try:
+            # ניסיון סנכרון עם המפתח הקבוע (שלא פג תוקף!)
             res = requests.get(f"{URL}?select=*,room:rooms(*)", headers=HEADERS)
             if res.status_code == 200:
                 st.session_state.web_bookings = res.json()
                 st.success("הנתונים נמשכו בהצלחה!")
-            else: st.error("שגיאה בחיבור לשרת")
-        except: st.error("וודאי שה-Secrets מוגדרים נכון")
+            else:
+                st.error(f"שגיאה {res.status_code}: האתר דורש זיהוי אישי. נצטרך את המעקף של גוגל.")
+        except Exception as e:
+            st.error(f"שגיאה טכנית: {e}")
 
     if 'web_bookings' in st.session_state:
         for b in st.session_state.web_bookings:
@@ -79,10 +77,10 @@ with tab1:
                         "name": b.get('customer_name', 'לקוח'),
                         "start": datetime.now(),
                         "total_people": p_count,
-                        "paying_people": p_count, # ברירת מחדל: כולם משלמים
+                        "paying_people": p_count,
                         "booked_duration": duration
                     }
-                    send_telegram(f"✅ {b.get('customer_name')} נכנסו! התראת יציאה תישלח בעוד {duration} דקות.")
+                    send_telegram(f"✅ {b.get('customer_name')} נכנסו! התראה תישלח בעוד {duration} דקות.")
                     schedule_msg(f"⏰ זמן נגמר! {b.get('customer_name')} היו אמורים לצאת.", duration)
                     st.rerun()
 
@@ -90,14 +88,9 @@ with tab2:
     if 'rooms_active' in st.session_state and st.session_state.rooms_active:
         for rid, data in list(st.session_state.rooms_active.items()):
             elapsed = (datetime.now() - data['start']).total_seconds() // 60
+            st.subheader(f"בחדר: {data['name']}")
             
-            st.subheader(f"חדר פעיל: {data['name']}")
-            col1, col2 = st.columns(2)
-            with col1:
-                data['paying_people'] = st.number_input("כמה משלמים?", 1, 50, data['paying_people'], key=f"pay_{rid}")
-            with col2:
-                st.write(f"⏱️ דקות בחדר: {int(elapsed)}")
-            
+            data['paying_people'] = st.number_input("כמה משלמים?", 1, 50, data['paying_people'], key=f"pay_{rid}")
             total_bill, per_person = calculate_price_logic(data['total_people'], data['paying_people'], elapsed)
             
             c1, c2 = st.columns(2)
@@ -110,21 +103,13 @@ with tab2:
                 st.rerun()
             st.divider()
     else:
-        st.info("אין חדרים בפעילות כרגע. עברי ללוח ההזמנות כדי להכניס קבוצה.")
+        st.info("אין חדרים פעילים.")
 
 with tab3:
-    st.subheader("🧮 מחשבון מחיר מהיר")
-    calc_total = st.number_input("סה\"כ אנשים בחדר (לקביעת תעריף)", 1, 50, 4)
-    calc_paying = st.number_input("כמה אנשים משלמים בפועל?", 1, 50, 4)
-    calc_minutes = st.number_input("כמה דקות שהו בחדר?", 1, 600, 60)
+    st.subheader("🧮 מחשבון מהיר")
+    calc_total = st.number_input("סה\"כ אנשים (לתעריף)", 1, 50, 4)
+    calc_paying = st.number_input("כמה משלמים?", 1, 50, 4)
+    calc_minutes = st.number_input("כמה דקות?", 1, 600, 60)
     
     total_res, per_res = calculate_price_logic(calc_total, calc_paying, calc_minutes)
-    
-    st.divider()
-    res_col1, res_col2 = st.columns(2)
-    res_col1.markdown(f"### סה\"כ לכולם:\n# ₪{total_res:.2f}")
-    res_col2.markdown(f"### מחיר לאדם:\n# ₪{per_res:.2f}")
-    
-    if st.button("שלחי סיכום מחיר לטלגרם"):
-        send_telegram(f"📊 חישוב מחיר: {calc_total} אנשים, {calc_minutes} דקות. סה\"כ: ₪{total_res:.2f} ({per_res:.2f} ₪ לאדם).")
-        st.success("החישוב נשלח לבוט!")
+    st.markdown(f"### סה\"כ: ₪{total_res:.2f} | לאדם: ₪{per_res:.2f}")
