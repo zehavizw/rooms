@@ -43,6 +43,24 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     per_paying = total_bill / paying_people if paying_people > 0 else 0
     return total_bill, per_paying
 
+def cleanup_deleted_bookings(current_source_list):
+    """מנגנון הניקוי: משווה ID ומנקה את מה שנמחק מהמקור"""
+    current_ids = {str(b['id']) for b in current_source_list}
+    
+    # ניקוי חדרים פעילים
+    active_keys = list(st.session_state.rooms_active.keys())
+    for rid in active_keys:
+        if rid not in current_ids:
+            name = st.session_state.rooms_active[rid].get('name', 'לקוח')
+            del st.session_state.rooms_active[rid]
+            send_telegram(f"🗑️ ההזמנה של {name} נמחקה מהאתר המקורי והוסרה מהחדרים הפעילים.")
+            
+    # ניקוי הזמנות שהסתיימו
+    finished_keys = list(st.session_state.finished_bookings.keys())
+    for rid in finished_keys:
+        if rid not in current_ids:
+            del st.session_state.finished_bookings[rid]
+
 # --- אתחול משתני מערכת ---
 if 'rooms_active' not in st.session_state: st.session_state.rooms_active = {}
 if 'finished_bookings' not in st.session_state: st.session_state.finished_bookings = {}
@@ -73,10 +91,15 @@ with tab1:
                 params = [("select", "*,room:rooms(*)"), ("booking_date", f"eq.{today}"), ("status", "neq.cancelled")]
                 res = requests.get(BOOKINGS_URL, headers=headers, params=params)
                 if res.status_code == 200:
-                    # מחיקת כפילויות מבוססת ID
                     raw_list = res.json()
-                    st.session_state.web_bookings = list({b['id']: b for b in raw_list}.values())
-                    st.success("סונכרן!")
+                    # מניעת כפילויות ועדכון רשימה
+                    unique_list = list({b['id']: b for b in raw_list}.values())
+                    st.session_state.web_bookings = unique_list
+                    
+                    # הפעלת ניקוי אוטומטי להזמנות שנמחקו
+                    cleanup_deleted_bookings(raw_list)
+                    
+                    st.success("סונכרן ובוצע ניקוי להזמנות שנמחקו!")
 
     filter_choice = st.radio("הצג:", ["הכל", "טרם הופעלו", "בפעילות", "הסתיימו"], horizontal=True)
 
@@ -124,13 +147,11 @@ def active_rooms_timer():
             elapsed = diff.total_seconds() / 60
             mins, secs = divmod(int(diff.total_seconds()), 60)
             
-            # התראה לטלגרם
             if elapsed >= data.get('planned_duration', 60) and f"out_{rid}" not in st.session_state.notified_entries:
                 send_telegram(f"⏰ זמן נגמר ל-{data['name']}!")
                 st.session_state.notified_entries.add(f"out_{rid}")
 
             st.subheader(f"📍 {data.get('room_name')} | {data['name']}")
-            # שימוש ב-on_change כדי לעדכן בלי לרענן הכל
             data['paying_people'] = st.number_input("משלמים", 1, 50, data['paying_people'], key=f"pay_{rid}")
             total, per_p = calculate_price_logic(data['total_people'], data['paying_people'], elapsed)
             
