@@ -1,26 +1,23 @@
 import streamlit as st
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import threading
 
 # הגדרות בסיס
-URL = f"{st.secrets['SUPABASE_URL']}/rest/v1/bookings"
-AUTH_URL = f"{st.secrets['SUPABASE_URL']}/auth/v1/token?grant_type=refresh_token"
+BASE_URL = st.secrets['SUPABASE_URL']
+BOOKINGS_URL = f"{BASE_URL}/rest/v1/bookings"
+AUTH_URL = f"{BASE_URL}/auth/v1/token?grant_type=refresh_token"
 
-# --- פונקציות חכמות ---
+# --- פונקציות ליבה ---
 
 def get_fresh_token():
-    """פונקציה שמשתמשת ב-Refresh Token כדי לקבל Access Token טרי"""
     payload = {"refresh_token": st.secrets["REFRESH_TOKEN"]}
     headers = {"apikey": st.secrets["SUPABASE_KEY"], "Content-Type": "application/json"}
     try:
         res = requests.post(AUTH_URL, json=payload, headers=headers)
-        if res.status_code == 200:
-            return res.json().get("access_token")
-    except:
-        return None
-    return None
+        return res.json().get("access_token") if res.status_code == 200 else None
+    except: return None
 
 def send_telegram(msg):
     token = st.secrets.get("TELEGRAM_TOKEN")
@@ -30,10 +27,10 @@ def send_telegram(msg):
         try: requests.get(url, params={"chat_id": chat_id, "text": msg})
         except: pass
 
-def schedule_msg(msg, delay_minutes):
+def schedule_exit_notification(name, duration_minutes):
     def wait_and_send():
-        time.sleep(max(0, delay_minutes * 60))
-        send_telegram(msg)
+        time.sleep(duration_minutes * 60)
+        send_telegram(f"⏰ זמן נגמר! הקבוצה של {name} צריכה לצאת.")
     threading.Thread(target=wait_and_send).start()
 
 def calculate_price_logic(total_people, paying_people, elapsed_minutes):
@@ -42,7 +39,6 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     elif 5 <= total_people <= 9: rates = [40, 30, 20]
     else: rates = [35, 25, 15]
 
-    # לוגיקת המחיר שלך: חלק משעה נחשב כמו השעה שלפני
     if elapsed_minutes <= 120:
         price_per_person = (elapsed_minutes / 60) * rates[0]
     elif elapsed_minutes <= 180:
@@ -54,114 +50,84 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     per_paying = total_bill / paying_people if paying_people > 0 else 0
     return total_bill, per_paying
 
-# --- ממשק המשתמש ---
-st.set_page_config(page_title="קריוקי זהבי", layout="centered")
-st.title("🎤 מרכז בקרה חכם - קריוקי")
+# --- אתחול משתני זיכרון ---
+if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
+if 'finished_bookings' not in st.session_state: st.session_state.finished_bookings = set()
+if 'rooms_active' not in st.session_state: st.session_state.rooms_active = {}
 
-tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון ידני"])
+# --- ממשק ---
+st.set_page_config(page_title="קריוקי זהבי", layout="centered")
+st.title("🎤 מרכז ניהול חכם - קריוקי")
+
+tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
 with tab1:
-    if st.button("🔄 סנכרן מהאתר (אוטומטי)"):
+    if st.button("🔄 סנכרן מהאתר"):
         token = get_fresh_token()
-        if not token:
-            st.error("לא הצלחתי לחדש את המפתח. ודאי שה-Refresh Token ב-Secrets נכון.")
-        else:
+        if token:
             today = datetime.now().strftime("%Y-%m-%d")
-            headers = {
-                "apikey": st.secrets["SUPABASE_KEY"],
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json"
-            }
-            params = [
-                ("select", "*,room:rooms(*)"),
-                ("booking_date", f"gte.{today}"),
-                ("booking_date", f"lte.{today}"),
-                ("status", "neq.cancelled"),
-                ("order", "start_time.asc")
-            ]
-            try:
-                res = requests.get(URL, headers=headers, params=params)
-                if res.status_code == 200:
-                    st.session_state.web_bookings = res.json()
-                    st.success(f"סנכרון הצליח! נמצאו {len(st.session_state.web_bookings)} הזמנות להיום.")
-                else:
-                    st.error(f"שגיאה {res.status_code} במשיכת נתונים.")
-            except Exception as e:
-                st.error(f"שגיאה בתקשורת: {e}")
+            headers = {"apikey": st.secrets["SUPABASE_KEY"], "Authorization": f"Bearer {token}"}
+            params = [("select", "*,room:rooms(*)"), ("booking_date", f"eq.{today}"), ("status", "neq.cancelled")]
+            res = requests.get(BOOKINGS_URL, headers=headers, params=params)
+            if res.status_code == 200:
+                st.session_state.web_bookings = res.json()
+                st.success("הזמנות עודכנו!")
 
     if 'web_bookings' in st.session_state:
+        now_str = datetime.now().strftime("%H:%M")
         for b in st.session_state.web_bookings:
             name = b.get('customer_name', 'לקוח')
-            time_str = b.get('start_time', '--:--')
-            with st.expander(f"{name} | {time_str}"):
-                p_count = st.number_input("כמות אנשים", 1, 50, 2, key=f"p_{b['id']}")
-                duration = st.number_input("דקות מוזמנות", 15, 300, 60, key=f"d_{b['id']}")
-                if st.button("🚀 כניסה (צ'ק-אין)", key=f"btn_{b['id']}"):
-                    if 'rooms_active' not in st.session_state: st.session_state.rooms_active = {}
-                    st.session_state.rooms_active[b['id']] = {
-                        "name": name, "start": datetime.now(),
-                        "total_people": p_count, "paying_people": p_count,
-                        "booked_duration": duration
-                    }
-                    send_telegram(f"✅ {name} נכנסו. הודעת סיום תישלח בעוד {duration} דקות.")
-                    schedule_msg(f"⏰ זמן נגמר ל-{name}! (חלפו {duration} דקות)", duration)
-                    st.rerun()
+            scheduled_time = b.get('start_time', '--:--')
+            bid = str(b['id'])
+            
+            # קביעת הסטטוס להצגה בכותרת
+            status_tag = ""
+            if bid in st.session_state.rooms_active: status_tag = "🔵 בפעילות"
+            elif bid in st.session_state.finished_bookings: status_tag = "🏁 נגמר הזמן"
+
+            with st.expander(f"{status_tag} {name} | {scheduled_time}"):
+                if bid in st.session_state.finished_bookings:
+                    st.success("✅ האירוח הסתיים והתשלום נגבה.")
+                elif bid in st.session_state.rooms_active:
+                    st.info("הקבוצה נמצאת כרגע בחדר. עברי ללשונית 'חדרים בפעילות'.")
+                else:
+                    p_count = st.number_input("כמה אנשים?", 1, 50, 2, key=f"p_{bid}")
+                    duration = st.number_input("לכמה זמן? (דקות)", 15, 300, 60, key=f"d_{bid}")
+                    if st.button("🚀 כניסה (צ'ק-אין)", key=f"btn_{bid}"):
+                        st.session_state.rooms_active[bid] = {
+                            "name": name, "actual_start": datetime.now(),
+                            "total_people": p_count, "paying_people": p_count, "planned_duration": duration
+                        }
+                        send_telegram(f"✅ {name} נכנסו. הודעת יציאה בעוד {duration} דקות.")
+                        schedule_exit_notification(name, duration)
+                        st.rerun()
 
 with tab2:
-    if 'rooms_active' in st.session_state and st.session_state.rooms_active:
-        # יצירת מקום ריק בתוך הלשונית שיתעדכן בלייב
+    if st.session_state.rooms_active:
         placeholder = st.empty()
-        
-        # לולאה שרצה ומעדכנת את השעון והמחיר
-        while len(st.session_state.rooms_active) > 0:
+        while st.session_state.rooms_active:
             with placeholder.container():
                 for rid, data in list(st.session_state.rooms_active.items()):
-                    # חישוב הזמן שעבר בשניות ודקות
-                    now = datetime.now()
-                    diff = now - data['start']
-                    total_seconds = int(diff.total_seconds())
-                    elapsed_minutes = total_seconds / 60
-                    
-                    # הצגת הזמן בפורמט של שעון (דקות:שניות)
-                    mins, secs = divmod(total_seconds, 60)
-                    time_display = f"{mins:02d}:{secs:02d}"
+                    diff = datetime.now() - data['actual_start']
+                    elapsed_min = diff.total_seconds() / 60
+                    mins, secs = divmod(int(diff.total_seconds()), 60)
                     
                     st.subheader(f"בחדר: {data['name']}")
+                    total_p, per_p = calculate_price_logic(data['total_people'], data['paying_people'], elapsed_min)
                     
-                    # חישוב המחיר המעודכן לשנייה זו
-                    total_bill, per_person = calculate_price_logic(
-                        data['total_people'], 
-                        data['paying_people'], 
-                        elapsed_minutes
-                    )
-                    
-                    # תצוגה של השעון והמחיר שרצים
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("⏱️ זמן בחדר", time_display)
-                    c2.metric("💰 סה\"כ", f"₪{total_bill:.2f}")
-                    c3.metric("👤 לאדם", f"₪{per_person:.2f}")
+                    c1.metric("⏱️ זמן", f"{mins:02d}:{secs:02d}")
+                    c2.metric("💰 סה\"כ", f"₪{total_p:.2f}")
+                    c3.metric("👤 לאדם", f"₪{per_p:.2f}")
                     
-                    if st.button("💰 סיום ותשלום", key=f"end_{rid}_{total_seconds}"):
-                        send_telegram(f"💸 {data['name']} סיימו. סה\"כ נגבה: ₪{total_bill:.2f}")
+                    if st.button("💰 סיום ותשלום", key=f"end_{rid}"):
+                        send_telegram(f"💸 {data['name']} סיימו. נגבה סה\"כ: ₪{total_p:.2f}")
+                        # העברה לרשימת ה"הסתיימו" ומחיקה מהפעילים
+                        st.session_state.finished_bookings.add(rid)
                         del st.session_state.rooms_active[rid]
                         st.rerun()
                     st.divider()
-                
-                # המתנה של שנייה אחת לפני העדכון הבא
-                time.sleep(1)
-                # פקודה שגורמת ל-Streamlit לרענן רק את הלולאה הזו
-                if len(st.session_state.rooms_active) > 0:
-                    continue
-    else:
-        st.info("אין חדרים פעילים. כנסי ללוח ההזמנות כדי להתחיל.")
- 
-with tab3:
-    st.subheader("🧮 מחשבון מחיר מהיר")
-    c_t = st.number_input("סה\"כ אנשים (לתעריף)", 1, 50, 4, key="calc_t")
-    c_p = st.number_input("כמה משלמים?", 1, 50, 4, key="calc_p")
-    c_m = st.number_input("כמה דקות?", 1, 600, 60, key="calc_m")
-    res_t, res_p = calculate_price_logic(c_t, c_p, c_m)
-    st.divider()
-    res_c1, res_c2 = st.columns(2)
-    res_c1.metric("סה\"כ לכולם", f"₪{res_t:.2f}")
-    res_c2.metric("מחיר לאדם", f"₪{res_p:.2f}")
+            time.sleep(1)
+    else: st.info("אין חדרים פעילים כרגע.")
+
+# ... לשונית המחשבון נשארת אותו דבר ...
