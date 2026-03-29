@@ -99,7 +99,7 @@ with tab2:
         b_people = st.number_input("כמה אנשים?", min_value=1, value=2)
         b_time = st.time_input("שעת הגעה")
         b_dur = st.number_input("משך זמן (דקות)", min_value=30, value=60, step=30)
-        if st.form_submit_button("הוסף ללו"ז"):
+        if st.form_submit_button('הוסף ללו"ז'):
             st.session_state.bookings.append({
                 "name": b_name, "room": b_room, "people": b_people, 
                 "time": b_time.strftime("%H:%M"), "duration": b_dur
