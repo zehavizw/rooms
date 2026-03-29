@@ -53,13 +53,11 @@ def sync_and_cleanup(selected_date):
     """מסנכרן לפי תאריך נבחר. מנקה מחיקות רק אם מסתכלים על משמרת נוכחית"""
     now = datetime.now()
     
-    # חוק שעון משמרת (לפני 6 בבוקר שייך לאתמול) - מופעל רק אם בחרנו את "היום" בלוח השנה
     if selected_date == now.date() and now.hour < 6:
         query_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
         is_current_shift = True
     else:
         query_date = selected_date.strftime("%Y-%m-%d")
-        # בודק האם התאריך שנבחר הוא התאריך של המשמרת הנוכחית
         is_current_shift = (query_date == now.strftime("%Y-%m-%d")) or (now.hour < 6 and query_date == (now - timedelta(days=1)).strftime("%Y-%m-%d"))
 
     res_source = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), 
@@ -68,8 +66,6 @@ def sync_and_cleanup(selected_date):
     
     source_bookings = res_source.json()
     
-    # מנגנון הניקוי ירוץ *רק* אם אנחנו מסתכלים על המשמרת של עכשיו
-    # (כדי שלא נמחק בטעות חדרים פעילים רק כי הסתכלנו על ההזמנות של אתמול)
     if is_current_shift:
         source_ids = [str(b['id']) for b in source_bookings]
         res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
@@ -80,26 +76,39 @@ def sync_and_cleanup(selected_date):
                     
     return source_bookings
 
+def get_shift_date(iso_time_str):
+    """פונקציית עזר שקובעת לאיזה 'יום משמרת' שייך החדר"""
+    if not iso_time_str: return None
+    try:
+        dt = datetime.fromisoformat(iso_time_str.replace('Z', '+00:00')).astimezone()
+        if dt.hour < 6:
+            return (dt - timedelta(days=1)).date()
+        return dt.date()
+    except:
+        return None
+
 # --- אתחול משתנים ---
 if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
 
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - זיכרון קבוע")
 
+# --- לוח השנה שולט עכשיו על כל האפליקציה (גם לשונית 1 וגם לשונית 2) ---
+col1, col2 = st.columns([2, 1])
+with col1:
+    selected_date = st.date_input("📅 בחר תאריך להצגה", datetime.now().date())
+with col2:
+    st.write("")
+    st.write("")
+    if st.button("🔄 סנכרן נתונים", use_container_width=True):
+        st.session_state.web_bookings = sync_and_cleanup(selected_date)
+        st.success(f"הנתונים ל-{selected_date.strftime('%d/%m/%Y')} עודכנו!")
+
+st.divider()
+
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
 with tab1:
-    # --- הוספת לוח השנה ---
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        selected_date = st.date_input("📅 בחר תאריך להצגה", datetime.now().date())
-    with col2:
-        st.write("") # מרווח כדי ליישר את הכפתור
-        st.write("")
-        if st.button("🔄 סנכרן נתונים", use_container_width=True):
-            st.session_state.web_bookings = sync_and_cleanup(selected_date)
-            st.success(f"הנתונים ל-{selected_date.strftime('%d/%m/%Y')} עודכנו!")
-
     if 'web_bookings' in st.session_state:
         res_active = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         active_ids = [str(a['booking_id']) for a in res_active.json()] if res_active.status_code == 200 else []
@@ -133,7 +142,7 @@ with tab1:
                         st.code(res.text)
 
 with tab2:
-    view_filter = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו היום"], horizontal=True)
+    view_filter = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
     st.divider()
 
     @st.fragment(run_every=5)
@@ -141,10 +150,13 @@ with tab2:
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         all_rooms = res.json() if res.status_code == 200 else []
 
+        # --- הסינון החדש! מציג רק את החדרים ששייכים לתאריך שבחרת למעלה ---
+        filtered_by_date = [r for r in all_rooms if get_shift_date(r['start_time']) == selected_date]
+
         if view_filter == "⚡ עכשיו בפעילות":
-            display_rooms = [r for r in all_rooms if r.get('status', 'active') == 'active']
+            display_rooms = [r for r in filtered_by_date if r.get('status', 'active') == 'active']
         else:
-            display_rooms = [r for r in all_rooms if r.get('status') == 'finished']
+            display_rooms = [r for r in filtered_by_date if r.get('status') == 'finished']
 
         if display_rooms:
             for room in display_rooms:
@@ -216,7 +228,7 @@ with tab2:
                         
                 st.divider()
         else: 
-            st.info("אין חדרים בתצוגה זו.")
+            st.info("אין נתונים לתאריך זה.")
 
     active_rooms_timer()
 
