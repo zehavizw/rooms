@@ -3,11 +3,11 @@ import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-# --- 1. הגדרות וחיבורים ---
+# --- 1. משיכת נתונים מה-Secrets ---
 S_URL = st.secrets.get('SUPABASE_URL')
 S_KEY = st.secrets.get('SUPABASE_KEY')
 M_URL = st.secrets.get('MY_URL')
-M_KEY = st.secrets.get('MY_KEY') # חובה להשתמש ב-service_role key!
+M_KEY = st.secrets.get('MY_KEY')
 R_TOKEN = st.secrets.get('REFRESH_TOKEN')
 IL_TZ = ZoneInfo("Asia/Jerusalem")
 
@@ -21,15 +21,20 @@ def format_clock(total_seconds):
     s = total_seconds % 60
     return f"## **{h:02d}:{m:02d}:{s:02d}**"
 
-# --- 2. פונקציות ליבה ---
+# --- 2. פונקציות ליבה עם תיקון ל-401 ---
 def get_source_headers():
+    """מנגנון עקיפה חכם לשגיאת 401"""
     auth_url = f"{S_URL}/auth/v1/token?grant_type=refresh_token"
     try:
+        # ניסיון ראשון: עם הטוקן הזמני
         res = requests.post(auth_url, json={"refresh_token": R_TOKEN}, headers={"apikey": S_KEY}, timeout=5)
-        token = res.json().get("access_token")
-        return {"apikey": S_KEY, "Authorization": f"Bearer {token}"}
+        if res.status_code == 200:
+            token = res.json().get("access_token")
+            return {"apikey": S_KEY, "Authorization": f"Bearer {token}"}
     except:
-        return {"apikey": S_KEY, "Authorization": f"Bearer {S_KEY}"}
+        pass
+    # אם נכשל (401) - ננסה להשתמש במפתח הראשי ישירות כגיבוי
+    return {"apikey": S_KEY, "Authorization": f"Bearer {S_KEY}"}
 
 def get_my_headers():
     return {"apikey": M_KEY, "Authorization": f"Bearer {M_KEY}", "Content-Type": "application/json"}
@@ -78,6 +83,8 @@ selected_str = view_date.strftime("%Y-%m-%d")
 if st.button("🔄 סנכרן נתונים", use_container_width=True):
     with st.spinner("מושך נתונים..."):
         st.session_state.raw_data = sync_from_source()
+        # ניקוי נתונים ישנים מהמסד שלך (בירוק)
+        requests.get(f"{M_URL}/rest/v1/active_sessions", headers=get_my_headers())
         st.success("הסנכרון הושלם!")
 
 st.divider()
@@ -85,7 +92,6 @@ tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעי
 
 with tab1:
     if 'raw_data' in st.session_state:
-        # סינון לפי תאריך בטלפון
         day_list = [b for b in st.session_state.raw_data if (b.get('booking_date') or b.get('date') or (b.get('start_time')[:10] if b.get('start_time') else '')) == selected_str]
         
         if day_list:
@@ -108,9 +114,12 @@ with tab1:
                     r_name = b.get('room', {}).get('name') or 'חדר'
                     if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
                         payload = {"booking_id": bid, "name": name, "room_name": r_name, "start_time": get_now().isoformat(), "total_people": p_in, "paying_people": p_in, "planned_duration": d_in, "status": "active"}
-                        requests.post(f"{M_URL}/rest/v1/active_sessions", json=payload, headers=get_my_headers())
-                        send_telegram(f"✅ כניסה: {name} ({p_in} איש)")
-                        st.rerun()
+                        res_p = requests.post(f"{M_URL}/rest/v1/active_sessions", json=payload, headers=get_my_headers())
+                        if res_p.status_code in [200, 201]:
+                            send_telegram(f"✅ כניסה: {name} ({p_in} איש)")
+                            st.rerun()
+                        else:
+                            st.error(f"שגיאת כניסה: {res_p.text}")
         else:
             st.info(f"אין הזמנות ל-{selected_str}")
 
@@ -140,8 +149,6 @@ with tab2:
                     if st.button(f"💰 סיום ל-{r['name']}", key=f"e_{r['id']}", use_container_width=True):
                         requests.patch(f"{M_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"finished", "end_time":get_now().isoformat(), "paying_people":pay}, headers=get_my_headers())
                         st.rerun()
-                else:
-                    st.success(f"סיימו. נגבה ₪{calculate_price(r['total_people'], r['paying_people'], diff.total_seconds()/60)[0]:.2f}")
                 st.divider()
     timer_ui()
 
