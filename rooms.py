@@ -10,7 +10,6 @@ MY_URL = st.secrets['MY_URL']
 MY_KEY = st.secrets['MY_KEY']
 
 # --- פונקציות ליבה ותקשורת ---
-
 def get_source_headers():
     auth_url = f"{SOURCE_URL}/auth/v1/token?grant_type=refresh_token"
     res = requests.post(auth_url, json={"refresh_token": st.secrets["REFRESH_TOKEN"]}, headers={"apikey": SOURCE_KEY})
@@ -51,7 +50,7 @@ def calculate_price_logic(total_people, paying_people, elapsed_minutes):
     return total_bill, per_paying
 
 def sync_and_cleanup():
-    """מסנכרן מהמקור ומנקה מהמסד הפרטי את מה שנמחק"""
+    """מסנכרן מהמקור ומנקה רק חדרים פעילים שנמחקו"""
     today = datetime.now().strftime("%Y-%m-%d")
     res_source = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), 
                               params={"booking_date": f"eq.{today}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
@@ -63,7 +62,8 @@ def sync_and_cleanup():
     res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
     if res_my.status_code == 200:
         for room in res_my.json():
-            if str(room['booking_id']) not in source_ids:
+            # מנקה רק אם זה חדר פעיל שנמחק מהמקור (לא נוגע בהיסטוריה)
+            if str(room['booking_id']) not in source_ids and room.get('status', 'active') == 'active':
                 requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
     return source_bookings
 
@@ -71,6 +71,19 @@ def sync_and_cleanup():
 if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
 
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
+
+# --- תפריט צד למחיקת היסטוריה בסוף משמרת ---
+with st.sidebar:
+    st.header("כלי מערכת")
+    if st.button("🗑️ נקה היסטוריית חדרים שסיימו"):
+        res = requests.get(f"{MY_URL}/rest/v1/active_sessions?status=eq.finished", headers=get_my_headers())
+        if res.status_code == 200:
+            for r in res.json():
+                requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", headers=get_my_headers())
+            st.success("ההיסטוריה נוקתה בהצלחה!")
+            time.sleep(1)
+            st.rerun()
+
 st.title("🎤 ניהול חכם - זיכרון קבוע")
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
@@ -100,7 +113,8 @@ with tab1:
                     data = {
                         "booking_id": bid, "name": name, "room_name": actual_r,
                         "start_time": datetime.now().isoformat(),
-                        "total_people": p, "paying_people": p, "planned_duration": d
+                        "total_people": p, "paying_people": p, "planned_duration": d,
+                        "status": "active" # ברירת מחדל לחדר חדש
                     }
                     res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
                     
@@ -112,37 +126,72 @@ with tab1:
                         st.code(res.text)
 
 with tab2:
+    view_filter = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו היום"], horizontal=True)
+    st.divider()
+
     @st.fragment(run_every=5)
     def active_rooms_timer():
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
-        active_rooms = res.json() if res.status_code == 200 else []
+        all_rooms = res.json() if res.status_code == 200 else []
 
-        if active_rooms:
-            for room in active_rooms:
+        # סינון לפי מה שבחרת למעלה
+        if view_filter == "⚡ עכשיו בפעילות":
+            display_rooms = [r for r in all_rooms if r.get('status', 'active') == 'active']
+        else:
+            display_rooms = [r for r in all_rooms if r.get('status') == 'finished']
+
+        if display_rooms:
+            for room in display_rooms:
                 start_dt = datetime.fromisoformat(room['start_time'].replace('Z', '+00:00'))
-                diff = datetime.now().astimezone() - start_dt.astimezone()
+                
+                # חישוב הזמן - אם סיים משתמשים בזמן הסיום כדי להקפיא את השעון
+                if room.get('status') == 'finished' and room.get('end_time'):
+                    end_dt = datetime.fromisoformat(room['end_time'].replace('Z', '+00:00'))
+                    diff = end_dt - start_dt
+                    is_active = False
+                else:
+                    diff = datetime.now().astimezone() - start_dt.astimezone()
+                    is_active = True
+
                 elapsed = diff.total_seconds() / 60
                 mins, secs = divmod(int(diff.total_seconds()), 60)
                 
-                if elapsed >= room['planned_duration'] and f"out_{room['id']}" not in st.session_state.notified_entries:
+                # התראת זמן נגמר (רק לחדרים פעילים)
+                if is_active and elapsed >= room['planned_duration'] and f"out_{room['id']}" not in st.session_state.notified_entries:
                     send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
                     st.session_state.notified_entries.add(f"out_{room['id']}")
 
                 st.subheader(f"📍 {room['room_name']} | {room['name']}")
-                paying = st.number_input("משלמים", 1, 50, room['paying_people'], key=f"pay_{room['id']}")
-                total, per_p = calculate_price_logic(room['total_people'], paying, elapsed)
                 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("⏱️ זמן", f"{mins:02d}:{secs:02d}")
-                c2.metric("💰 סה\"כ", f"₪{total:.2f}")
-                c3.metric("👤 לאדם", f"₪{per_p:.2f}")
-                
-                if st.button(f"💰 סיום ל-{room['name']}", key=f"end_{room['id']}"):
-                    requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
-                    send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
-                    st.rerun()
+                if is_active:
+                    paying = st.number_input("משלמים", 1, 50, room['paying_people'], key=f"pay_{room['id']}")
+                    total, per_p = calculate_price_logic(room['total_people'], paying, elapsed)
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("⏱️ זמן", f"{mins:02d}:{secs:02d}")
+                    c2.metric("💰 סה\"כ", f"₪{total:.2f}")
+                    c3.metric("👤 לאדם", f"₪{per_p:.2f}")
+                    
+                    if st.button(f"💰 סיום ל-{room['name']}", key=f"end_{room['id']}"):
+                        update_data = {
+                            "status": "finished",
+                            "end_time": datetime.now().isoformat(),
+                            "paying_people": paying
+                        }
+                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
+                        send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
+                        st.rerun()
+                else:
+                    # תצוגת היסטוריה חסינת רענונים
+                    total, per_p = calculate_price_logic(room['total_people'], room['paying_people'], elapsed)
+                    st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} | כסף שנגבה: ₪{total:.2f}")
+                    if st.button("🔄 החזר לפעילות", key=f"ret_{room['id']}"):
+                        update_data = {"status": "active", "end_time": None}
+                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
+                        st.rerun()
                 st.divider()
-        else: st.info("אין חדרים פעילים.")
+        else: 
+            st.info("אין חדרים בתצוגה זו.")
 
     active_rooms_timer()
 
