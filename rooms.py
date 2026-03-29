@@ -109,24 +109,52 @@ with tab1:
 
 with tab2:
     if 'rooms_active' in st.session_state and st.session_state.rooms_active:
-        for rid, data in list(st.session_state.rooms_active.items()):
-            elapsed = (datetime.now() - data['start']).total_seconds() // 60
-            st.subheader(f"בחדר: {data['name']}")
-            data['paying_people'] = st.number_input("משלמים בפועל", 1, 50, data['paying_people'], key=f"pay_{rid}")
-            total_bill, per_person = calculate_price_logic(data['total_people'], data['paying_people'], elapsed)
-            
-            c1, c2 = st.columns(2)
-            c1.metric("סה\"כ לתשלום", f"₪{total_bill:.2f}")
-            c2.metric("לאדם משלם", f"₪{per_person:.2f}")
-            st.write(f"⏱️ זמן בחדר: {int(elapsed)} דקות")
-            
-            if st.button("💰 סיום ותשלום", key=f"end_{rid}", use_container_width=True):
-                send_telegram(f"💸 סשן הסתיים: {data['name']}. נגבה סה\"כ: ₪{total_bill:.2f}")
-                del st.session_state.rooms_active[rid]
-                st.rerun()
-            st.divider()
-    else: st.info("אין חדרים פעילים.")
-
+        # יצירת מקום ריק בתוך הלשונית שיתעדכן בלייב
+        placeholder = st.empty()
+        
+        # לולאה שרצה ומעדכנת את השעון והמחיר
+        while len(st.session_state.rooms_active) > 0:
+            with placeholder.container():
+                for rid, data in list(st.session_state.rooms_active.items()):
+                    # חישוב הזמן שעבר בשניות ודקות
+                    now = datetime.now()
+                    diff = now - data['start']
+                    total_seconds = int(diff.total_seconds())
+                    elapsed_minutes = total_seconds / 60
+                    
+                    # הצגת הזמן בפורמט של שעון (דקות:שניות)
+                    mins, secs = divmod(total_seconds, 60)
+                    time_display = f"{mins:02d}:{secs:02d}"
+                    
+                    st.subheader(f"בחדר: {data['name']}")
+                    
+                    # חישוב המחיר המעודכן לשנייה זו
+                    total_bill, per_person = calculate_price_logic(
+                        data['total_people'], 
+                        data['paying_people'], 
+                        elapsed_minutes
+                    )
+                    
+                    # תצוגה של השעון והמחיר שרצים
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("⏱️ זמן בחדר", time_display)
+                    c2.metric("💰 סה\"כ", f"₪{total_bill:.2f}")
+                    c3.metric("👤 לאדם", f"₪{per_person:.2f}")
+                    
+                    if st.button("💰 סיום ותשלום", key=f"end_{rid}_{total_seconds}"):
+                        send_telegram(f"💸 {data['name']} סיימו. סה\"כ נגבה: ₪{total_bill:.2f}")
+                        del st.session_state.rooms_active[rid]
+                        st.rerun()
+                    st.divider()
+                
+                # המתנה של שנייה אחת לפני העדכון הבא
+                time.sleep(1)
+                # פקודה שגורמת ל-Streamlit לרענן רק את הלולאה הזו
+                if len(st.session_state.rooms_active) > 0:
+                    continue
+    else:
+        st.info("אין חדרים פעילים. כנסי ללוח ההזמנות כדי להתחיל.")
+ 
 with tab3:
     st.subheader("🧮 מחשבון מחיר מהיר")
     c_t = st.number_input("סה\"כ אנשים (לתעריף)", 1, 50, 4, key="calc_t")
