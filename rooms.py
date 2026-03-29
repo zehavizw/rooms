@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 
 # --- הגדרות חיבור (מקור ופרטי) ---
@@ -62,7 +62,6 @@ def sync_and_cleanup():
     res_my = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
     if res_my.status_code == 200:
         for room in res_my.json():
-            # מנקה רק אם זה חדר פעיל שנמחק מהמקור (לא נוגע בהיסטוריה)
             if str(room['booking_id']) not in source_ids and room.get('status', 'active') == 'active':
                 requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", headers=get_my_headers())
     return source_bookings
@@ -71,19 +70,6 @@ def sync_and_cleanup():
 if 'notified_entries' not in st.session_state: st.session_state.notified_entries = set()
 
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
-
-# --- תפריט צד למחיקת היסטוריה בסוף משמרת ---
-with st.sidebar:
-    st.header("כלי מערכת")
-    if st.button("🗑️ נקה היסטוריית חדרים שסיימו"):
-        res = requests.get(f"{MY_URL}/rest/v1/active_sessions?status=eq.finished", headers=get_my_headers())
-        if res.status_code == 200:
-            for r in res.json():
-                requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", headers=get_my_headers())
-            st.success("ההיסטוריה נוקתה בהצלחה!")
-            time.sleep(1)
-            st.rerun()
-
 st.title("🎤 ניהול חכם - זיכרון קבוע")
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
@@ -114,7 +100,7 @@ with tab1:
                         "booking_id": bid, "name": name, "room_name": actual_r,
                         "start_time": datetime.now().isoformat(),
                         "total_people": p, "paying_people": p, "planned_duration": d,
-                        "status": "active" # ברירת מחדל לחדר חדש
+                        "status": "active" 
                     }
                     res = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=data, headers=get_my_headers())
                     
@@ -134,7 +120,7 @@ with tab2:
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         all_rooms = res.json() if res.status_code == 200 else []
 
-        # סינון לפי מה שבחרת למעלה
+        # סינון לפי בחירה
         if view_filter == "⚡ עכשיו בפעילות":
             display_rooms = [r for r in all_rooms if r.get('status', 'active') == 'active']
         else:
@@ -144,7 +130,6 @@ with tab2:
             for room in display_rooms:
                 start_dt = datetime.fromisoformat(room['start_time'].replace('Z', '+00:00'))
                 
-                # חישוב הזמן - אם סיים משתמשים בזמן הסיום כדי להקפיא את השעון
                 if room.get('status') == 'finished' and room.get('end_time'):
                     end_dt = datetime.fromisoformat(room['end_time'].replace('Z', '+00:00'))
                     diff = end_dt - start_dt
@@ -156,7 +141,6 @@ with tab2:
                 elapsed = diff.total_seconds() / 60
                 mins, secs = divmod(int(diff.total_seconds()), 60)
                 
-                # התראת זמן נגמר (רק לחדרים פעילים)
                 if is_active and elapsed >= room['planned_duration'] and f"out_{room['id']}" not in st.session_state.notified_entries:
                     send_telegram(f"⏰ זמן נגמר ל-{room['name']}!")
                     st.session_state.notified_entries.add(f"out_{room['id']}")
@@ -182,13 +166,36 @@ with tab2:
                         send_telegram(f"💸 {room['name']} סיימו. נגבה ₪{total:.2f}")
                         st.rerun()
                 else:
-                    # תצוגת היסטוריה חסינת רענונים
+                    # תצוגה של חדר שהסתיים
                     total, per_p = calculate_price_logic(room['total_people'], room['paying_people'], elapsed)
                     st.success(f"הסתיים. זמן כולל: {mins:02d}:{secs:02d} | כסף שנגבה: ₪{total:.2f}")
-                    if st.button("🔄 החזר לפעילות", key=f"ret_{room['id']}"):
-                        update_data = {"status": "active", "end_time": None}
+                    
+                    c_ret1, c_ret2 = st.columns(2)
+                    
+                    # אופציה 1: להתחיל מחדש מאפס
+                    if c_ret1.button("🔄 התחל מחדש", key=f"ret_new_{room['id']}"):
+                        update_data = {
+                            "status": "active", 
+                            "start_time": datetime.now().isoformat(),
+                            "end_time": None
+                        }
                         requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
                         st.rerun()
+                        
+                    # אופציה 2: להמשיך מאותה הנקודה שעצרנו בה (מקזז את הזמן שהחדר עמד ריק)
+                    if c_ret2.button("▶️ המשך מאותה נקודה", key=f"ret_cont_{room['id']}"):
+                        now_dt = datetime.now().astimezone()
+                        active_duration = end_dt - start_dt
+                        new_start = now_dt - active_duration
+                        
+                        update_data = {
+                            "status": "active", 
+                            "start_time": new_start.isoformat(),
+                            "end_time": None
+                        }
+                        requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{room['id']}", json=update_data, headers=get_my_headers())
+                        st.rerun()
+                        
                 st.divider()
         else: 
             st.info("אין חדרים בתצוגה זו.")
