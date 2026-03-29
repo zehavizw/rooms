@@ -50,9 +50,8 @@ if 'notified_entries' not in st.session_state: st.session_state.notified_entries
 
 # --- ממשק משתמש ---
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
-st.title("🎤 ניהול חכם - קריוקי")
+st.title("🎤 מרכז ניהול חכם - קריוקי")
 
-# תפריט צד
 with st.sidebar:
     st.header("כלי מערכת")
     if st.button("🗑️ איפוס זיכרון מלא"):
@@ -60,11 +59,6 @@ with st.sidebar:
         st.session_state.finished_bookings = {}
         st.session_state.notified_entries = set()
         st.rerun()
-    st.write("---")
-    # טיימר ידני אם רוצים לרענן את המחירים בחדרים
-    if st.session_state.rooms_active:
-        if st.button("🔄 רענן מחירים עכשיו"):
-            st.rerun()
 
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ חדרים בפעילות", "🧮 מחשבון"])
 
@@ -79,10 +73,9 @@ with tab1:
                 params = [("select", "*,room:rooms(*)"), ("booking_date", f"eq.{today}"), ("status", "neq.cancelled")]
                 res = requests.get(BOOKINGS_URL, headers=headers, params=params)
                 if res.status_code == 200:
-                    # שימוש במילון כדי למנוע כפילויות של אותו ID מהשרת
-                    bookings_list = res.json()
-                    unique_bookings = {str(b['id']): b for b in bookings_list}
-                    st.session_state.web_bookings = list(unique_bookings.values())
+                    # מחיקת כפילויות מבוססת ID
+                    raw_list = res.json()
+                    st.session_state.web_bookings = list({b['id']: b for b in raw_list}.values())
                     st.success("סונכרן!")
 
     filter_choice = st.radio("הצג:", ["הכל", "טרם הופעלו", "בפעילות", "הסתיימו"], horizontal=True)
@@ -92,12 +85,11 @@ with tab1:
             bid = str(b['id'])
             name = b.get('customer_name', 'לקוח')
             sched_time = b.get('start_time', '--:--')
-            room_name = b.get('room', {}).get('name', 'לא הוקצה')
+            room_name = b.get('room', {}).get('name', 'חדר לא הוקצה')
             
             is_active = bid in st.session_state.rooms_active
             is_finished = bid in st.session_state.finished_bookings
             
-            # לוגיקת סינון קשוחה
             if filter_choice == "טרם הופעלו" and (is_active or is_finished): continue
             if filter_choice == "בפעילות" and not is_active: continue
             if filter_choice == "הסתיימו" and not is_finished: continue
@@ -105,11 +97,10 @@ with tab1:
             icon = "🏁" if is_finished else ("🔵" if is_active else "⏳")
             with st.expander(f"{icon} {name} | {sched_time} | {room_name}"):
                 if is_finished:
-                    f_info = st.session_state.finished_bookings[bid]
-                    st.write(f"✅ הסתיים בחדר {f_info.get('room_name')}")
+                    st.write(f"✅ הסתיים בחדר {st.session_state.finished_bookings[bid].get('room_name')}")
                     c1, c2 = st.columns(2)
                     if c1.button("🔄 מחדש", key=f"re_{bid}"): del st.session_state.finished_bookings[bid]; st.rerun()
-                    if c2.button("➕ המשך", key=f"co_{bid}"): st.session_state.rooms_active[bid] = f_info; del st.session_state.finished_bookings[bid]; st.rerun()
+                    if c2.button("➕ המשך", key=f"co_{bid}"): st.session_state.rooms_active[bid] = st.session_state.finished_bookings[bid]; del st.session_state.finished_bookings[bid]; st.rerun()
                 elif is_active:
                     st.info(f"בפעילות בחדר {st.session_state.rooms_active[bid].get('room_name')}")
                 else:
@@ -124,20 +115,22 @@ with tab1:
                         }
                         send_telegram(f"✅ {name} נכנסו ל-{actual_r}."); st.rerun()
 
-with tab2:
+# --- מקטע טיימר עצמאי (Fragment) ---
+@st.fragment(run_every=5)
+def active_rooms_timer():
     if st.session_state.rooms_active:
         for rid, data in list(st.session_state.rooms_active.items()):
-            if not isinstance(data, dict) or 'start' not in data: continue
             diff = datetime.now() - data['start']
             elapsed = diff.total_seconds() / 60
             mins, secs = divmod(int(diff.total_seconds()), 60)
             
-            # התראה לטלגרם כשנגמר הזמן
+            # התראה לטלגרם
             if elapsed >= data.get('planned_duration', 60) and f"out_{rid}" not in st.session_state.notified_entries:
                 send_telegram(f"⏰ זמן נגמר ל-{data['name']}!")
                 st.session_state.notified_entries.add(f"out_{rid}")
 
             st.subheader(f"📍 {data.get('room_name')} | {data['name']}")
+            # שימוש ב-on_change כדי לעדכן בלי לרענן הכל
             data['paying_people'] = st.number_input("משלמים", 1, 50, data['paying_people'], key=f"pay_{rid}")
             total, per_p = calculate_price_logic(data['total_people'], data['paying_people'], elapsed)
             
@@ -146,21 +139,20 @@ with tab2:
             c2.metric("💰 סה\"כ", f"₪{total:.2f}")
             c3.metric("👤 לאדם", f"₪{per_p:.2f}")
             
-            if st.button(f"💰 סיום", key=f"end_{rid}"):
+            if st.button(f"💰 סיום ל-{data['name']}", key=f"end_{rid}"):
                 send_telegram(f"💸 {data['name']} סיימו. נגבה ₪{total:.2f}")
                 st.session_state.finished_bookings[rid] = data
                 del st.session_state.rooms_active[rid]
                 st.rerun()
             st.divider()
-        
-        # ריענון חכם: רק אם יש חדרים פעילים, האפליקציה תרענן את עצמה
-        time.sleep(10)
-        st.rerun()
     else:
         st.info("אין חדרים פעילים.")
 
+with tab2:
+    active_rooms_timer()
+
 with tab3:
-    st.subheader("🧮 מחשבון מחיר מהיר")
+    st.subheader("🧮 מחשבון")
     calc_name = st.text_input("שם הלקוח", "כללי")
     c1, c2, c3 = st.columns(3)
     c_tot = c1.number_input("סה\"כ איש", 1, 50, 4)
