@@ -78,8 +78,9 @@ def get_shift_date(iso):
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - חדר קריוקי")
 
-selected_date = st.date_input("📅 בחר תאריך להצגה", get_now().date())
-if st.button("🔄 סנכרן נתונים", use_container_width=True):
+# אם עכשיו לפני 6 בבוקר, ברירת המחדל תהיה התאריך של אתמול
+default_date = (get_now() - timedelta(days=1)).date() if get_now().hour < 6 else get_now().date()
+selected_date = st.date_input("📅 בחר תאריך להצגה", default_date)if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.session_state.web_bookings = sync_and_cleanup(selected_date)
     
     # הפקודה len סופרת כמה הזמנות יש בתוך הרשימה שקיבלנו
