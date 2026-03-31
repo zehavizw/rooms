@@ -142,12 +142,25 @@ with tab2:
         if res.status_code == 200:
             all_rooms = res.json()
             
-            # הצגת חדרים פעילים - בלי סינון תאריך מורכב, פשוט כל מי שסטטוס שלו 'active'
+            # --- 1. הצגת חדרים פעילים (מופיעים תמיד ברגע שנכנסו) ---
             if v == "⚡ עכשיו בפעילות":
                 disp = [r for r in all_rooms if r.get('status', 'active') == 'active']
+            
+            # --- 2. הצגת חדרים שסיימו (רשת ביטחון של 12 שעות) ---
             else:
-                # בסיימו אנחנו כן מסננים לפי התאריך שנבחר
-                disp = [r for r in all_rooms if r.get('status') == 'finished' and get_shift_date(r['end_time']) == selected_date]
+                cutoff = get_now() - timedelta(hours=12)
+                disp = []
+                for r in all_rooms:
+                    if r.get('status') == 'finished':
+                        try:
+                            # בודק מתי החדר הסתיים
+                            e_time = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
+                            # אם הוא סיים ב-12 השעות האחרונות - הוא יופיע ברשימה
+                            if e_time > cutoff:
+                                disp.append(r)
+                        except: continue
+                # מיון כדי שהסיומים האחרונים יהיו למעלה
+                disp.sort(key=lambda x: x.get('end_time', ''), reverse=True)
             
             if not disp:
                 st.info("אין חדרים להצגה כרגע.")
@@ -169,7 +182,6 @@ with tab2:
                     st.write(f"נכנסו ב-{s_dt.strftime('%H:%M')} | הוזמן ל-{planned} דק'")
                     
                     if active:
-                        # וידוא שמושכים מספרים תקינים למחשבון
                         t_people = int(r.get('total_people', 2))
                         p_people = int(r.get('paying_people', t_people))
                         
@@ -188,13 +200,14 @@ with tab2:
                             send_telegram(f"💸 סיום: {r['name']} סיימו ב-{r['room_name']}. נגבה ₪{total:.2f}")
                             st.rerun()
                     else:
+                        # תצוגה לקבוצה שסיימה
                         total, per = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
-                        st.success(f"הסתיים. זמן כולל: {int(diff.total_seconds()//60)} דק' | נגבה: ₪{total:.2f}")
+                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')}. זמן: {int(diff.total_seconds()//60)} דק' | סה\"כ: ₪{total:.2f}")
                     st.divider()
                 except Exception as e:
                     st.error(f"שגיאה בהצגת חדר: {e}")
         else:
-            st.error("לא הצלחתי למשוך נתונים מהשרת הפרטי.")
+            st.error("לא הצלחתי למשוך נתונים מהכספת הפרטית.")
     timer()
 
 with tab3:
