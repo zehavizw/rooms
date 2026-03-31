@@ -99,13 +99,18 @@ with tab1:
             orig_duration = int(b.get('duration_hours', 1) * 60)
             
             with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דק') | {b.get('room',{}).get('name')}"):
-                p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
-                d = st.number_input("משך זמן (דקות)", 15, 300, int(orig_duration), key=f"d_{bid}")
-                r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
-                if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
-                    requests.post(f"{MY_URL}/rest/v1/active_sessions", json={"booking_id":bid,"name":b.get('customer_name'),"room_name":r_act,"start_time":get_now().isoformat(),"total_people":p,"paying_people":p,"planned_duration":d,"status":"active"}, headers=get_my_headers())
-                    send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דק')")
-                    st.rerun()
+                 # כאן התיבה מקבלת את orig_people בתור ערך ברירת המחדל שלה
+                 p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
+    
+                 # כאן התיבה מקבלת את orig_duration (שהפכנו לדקות) בתור ברירת מחדל
+                 d = st.number_input("משך זמן (דקות)", 15, 300, int(orig_duration), key=f"d_{bid}")
+    
+                 r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
+    
+                 if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
+                     requests.post(f"{MY_URL}/rest/v1/active_sessions", json={"booking_id":bid,"name":b.get('customer_name'),"room_name":r_act,"start_time":get_now().isoformat(),"total_people":p,"paying_people":p,"planned_duration":d,"status":"active"}, headers=get_my_headers())
+                     send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דק')")
+                     st.rerun()
 
 with tab2:
     v = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
