@@ -103,7 +103,7 @@ with tab1:
             orig_people = b.get('guest_count', 2)
             orig_duration = int(b.get('duration_hours', 1) * 60)
             
-            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דק') | {b.get('room',{}).get('name')}"):
+            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} 'דק) | {b.get('room',{}).get('name')}"):
                  # כאן התיבה מקבלת את orig_people בתור ערך ברירת המחדל שלה
                  p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
     
@@ -127,7 +127,7 @@ with tab1:
                             
                      # בודק אם השמירה הצליחה (קוד 200 או 201 אומר הצלחה)
                      if res_post.status_code in [200, 201, 204]:
-                         send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דק')")
+                         send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} 'דק)")
                          st.rerun()
                      else:
                          # אם נכשל - מדפיס את השגיאה באדום על המסך!
@@ -179,7 +179,7 @@ with tab2:
                         active = True
                     
                     st.subheader(f"📍 {r['room_name']} | {r['name']}")
-                    st.write(f"נכנסו ב-{s_dt.strftime('%H:%M')} | הוזמן ל-{planned} דק'")
+                    st.write(f"נכנסו ב-{s_dt.strftime('%H:%M')} | הוזמן ל-{planned} 'דק")
                     
                     if active:
                         t_people = int(r.get('total_people', 2))
@@ -214,7 +214,7 @@ with tab3:
     st.subheader("🧮 מחשבון מחיר מהיר")
     calc_name = st.text_input("👤 שם הלקוח (לבדיקה)", "לקוח כללי")
     c1, c2, c3 = st.columns(3)
-    c_tot, c_pay, c_min = c1.number_input("סה\"כ איש", 1, 50, 4), c2.number_input("משלמים", 1, 50, 4), c3.number_input("זמן דק'", 1, 600, 60)
+    c_tot, c_pay, c_min = c1.number_input("סה\"כ אנשים", 1, 50, 4), c2.number_input("משלמים", 1, 50, 4), c3.number_input("זמן דק'", 1, 600, 60)
     t_res, p_res = calculate_price_logic(c_tot, c_pay, c_min)
     st.divider()
     col_res1, col_res2 = st.columns(2)
