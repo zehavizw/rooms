@@ -95,8 +95,8 @@ with tab1:
             if bid in a_ids: continue
             
             # משיכת הנתונים האמיתיים מההזמנה
-            orig_people = b.get('total_people', 2)
-            orig_duration = b.get('duration_minutes', 60)
+            orig_people = b.get('guest_count', 2)
+            orig_duration = int(b.get('duration_hours', 1) * 60)
             
             with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דק') | {b.get('room',{}).get('name')}"):
                 p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
