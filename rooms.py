@@ -113,25 +113,25 @@ with tab1:
                  r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
     
                 if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
-                            payload = {
-                                "booking_id": bid,
-                                "name": b.get('customer_name'),
-                                "room_name": r_act,
-                                "start_time": get_now().isoformat(),
-                                "total_people": p,
-                                "paying_people": p,
-                                "planned_duration": d,
-                                "status": "active"
-                            }
-                            res_post = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=payload, headers=get_my_headers())
+                    payload = {
+                        "booking_id": bid,
+                        "name": b.get('customer_name'),
+                        "room_name": r_act,
+                        "start_time": get_now().isoformat(),
+                        "total_people": p,
+                        "paying_people": p,
+                        "planned_duration": d,
+                        "status": "active"
+                    }
+                    res_post = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=payload, headers=get_my_headers())
                             
-                            # בודק אם השמירה הצליחה (קוד 200 או 201 אומר הצלחה)
-                            if res_post.status_code in [200, 201, 204]:
-                                send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דק')")
-                                st.rerun()
-                            else:
-                                # אם נכשל - מדפיס את השגיאה באדום על המסך!
-                                st.error(f"השמירה נכשלה! קוד {res_post.status_code}: {res_post.text}")
+                    # בודק אם השמירה הצליחה (קוד 200 או 201 אומר הצלחה)
+                    if res_post.status_code in [200, 201, 204]:
+                        send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דק')")
+                        st.rerun()
+                    else:
+                        # אם נכשל - מדפיס את השגיאה באדום על המסך!
+                        st.error(f"השמירה נכשלה! קוד {res_post.status_code}: {res_post.text}")
 
 with tab2:
     v = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
