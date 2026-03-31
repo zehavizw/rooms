@@ -89,46 +89,60 @@ if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.success(f"עודכן! נמצאו {bookings_count} הזמנות.")
 
 st.divider()# --- תפריט ניווט יציב (במקום טאבים שקופצים) ---
-# יצירת תפריט כפתורים עליון שיחליף את הטאבים
+# --- תפריט ניווט יציב (במקום טאבים שקופצים) ---
 menu_choice = st.radio(
-    "בחר מסך:", 
+    "ניווט", 
     ["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון"], 
     horizontal=True,
     label_visibility="collapsed"
 )
 
-# --- 1. מסך לוח הזמנות ---
+# --- לוגיקה של המסכים (מועתקת בדיוק מהקוד שלך) ---
+
+# 1. לוח הזמנות (בדיוק כמו שהיה ב-tab1)
 if menu_choice == "📅 לוח הזמנות":
     if 'web_bookings' in st.session_state:
         res_a = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         a_ids = [str(a['booking_id']) for a in res_a.json()] if res_a.status_code == 200 else []
-        
         for b in st.session_state.web_bookings:
             bid = str(b['id'])
             if bid in a_ids: continue
             
+            # משיכת הנתונים האמיתיים מההזמנה
             orig_people = b.get('guest_count', 2)
             orig_duration = int(b.get('duration_hours', 1) * 60)
             
-            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דק')"):
+            with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דקות) | {b.get('room',{}).get('name')}"):
+                 # כאן התיבה מקבלת את orig_people בתור ערך ברירת המחדל שלה
                  p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
+
+                 # כאן התיבה מקבלת את orig_duration (שהפכנו לדקות) בתור ברירת מחדל
                  d = st.number_input("משך זמן (דקות)", 15, 300, int(orig_duration), key=f"d_{bid}")
+
                  r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
 
                  if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
                      payload = {
-                         "booking_id": bid, "name": b.get('customer_name'), "room_name": r_act,
-                         "start_time": get_now().isoformat(), "total_people": p,
-                         "paying_people": p, "planned_duration": d, "status": "active"
+                         "booking_id": bid,
+                         "name": b.get('customer_name'),
+                         "room_name": r_act,
+                         "start_time": get_now().isoformat(),
+                         "total_people": p,
+                         "paying_people": p,
+                         "planned_duration": d,
+                         "status": "active"
                      }
                      res_post = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=payload, headers=get_my_headers())
+                     
                      if res_post.status_code in [200, 201, 204]:
-                         send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act}")
+                         send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דקות)")
                          st.rerun()
+                     else:
+                         st.error(f"השמירה נכשלה! קוד {res_post.status_code}: {res_post.text}")
 
-# --- 2. מסך עכשיו בפעילות / סיימו ---
+# 2. עכשיו בפעילות (בדיוק כמו שהיה ב-tab2)
 elif menu_choice == "⚡ עכשיו בפעילות":
-    v = st.radio("מצב:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
+    v = st.radio("תצוגה:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
     
     @st.fragment(run_every=5)
     def timer():
@@ -136,8 +150,11 @@ elif menu_choice == "⚡ עכשיו בפעילות":
         if res.status_code == 200:
             all_rooms = res.json()
             
+            # --- 1. הצגת חדרים פעילים ---
             if v == "⚡ עכשיו בפעילות":
                 disp = [r for r in all_rooms if r.get('status', 'active') == 'active']
+            
+            # --- 2. הצגת חדרים שסיימו ---
             else:
                 cutoff = get_now() - timedelta(hours=12)
                 disp = []
@@ -145,53 +162,68 @@ elif menu_choice == "⚡ עכשיו בפעילות":
                     if r.get('status') == 'finished':
                         try:
                             e_time = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
-                            if e_time > cutoff: disp.append(r)
+                            if e_time > cutoff:
+                                disp.append(r)
                         except: continue
                 disp.sort(key=lambda x: x.get('end_time', ''), reverse=True)
             
-            if not disp: st.info("אין חדרים להצגה.")
+            if not disp:
+                st.info("אין חדרים להצגה כרגע.")
                 
             for r in disp:
                 try:
                     s_dt = datetime.fromisoformat(r['start_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
                     planned = r.get('planned_duration', 60)
                     
-                    if r.get('status') == 'active':
+                    if r.get('status') == 'finished':
+                        e_dt = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
+                        diff = e_dt - s_dt
+                        active = False
+                    else:
                         diff = get_now() - s_dt
-                        pay = st.number_input("משלמים", 1, 50, int(r.get('paying_people', 2)), key=f"pay_{r['id']}")
-                        total, per = calculate_price_logic(int(r['total_people']), pay, diff.total_seconds()/60)
+                        active = True
+                    
+                    st.subheader(f"📍 {r['room_name']} | {r['name']}")
+                    st.write(f"נכנסו ב-{s_dt.strftime('%H:%M')} | הוזמן ל-{planned} דקות")
+                    
+                    if active:
+                        t_people = int(r.get('total_people', 2))
+                        p_people = int(r.get('paying_people', t_people))
                         
-                        st.subheader(f"📍 {r['room_name']} | {r['name']}")
+                        pay = st.number_input("משלמים", 1, 50, p_people, key=f"pay_{r['id']}")
+                        total, per = calculate_price_logic(t_people, pay, diff.total_seconds()/60)
+                        
                         c1, c2, c3 = st.columns([2, 1, 1])
                         with c1:
+                            st.write("⏱️ **זמן שחלף:**")
                             st.write(format_simple_clock(diff.total_seconds()))
-                        c2.metric("💰 סה\"כ", f"₪{total:.2f}")
-                        c3.metric("👤 לאדם", f"₪{per:.2f}")
+                        c2.metric("💰 **סה\"כ**", f"₪{total:.2f}")
+                        c3.metric("👤 **לאדם**", f"₪{per:.2f}")
                         
                         if st.button(f"💰 סיום ל-{r['name']}", key=f"e_{r['id']}", use_container_width=True):
                             requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"finished","end_time":get_now().isoformat(),"paying_people":pay}, headers=get_my_headers())
-                            send_telegram(f"💸 סיום: {r['name']} ב-{r['room_name']}. נגבה ₪{total:.2f}")
+                            send_telegram(f"💸 סיום: {r['name']} סיימו ב-{r['room_name']}. נגבה ₪{total:.2f}")
                             st.rerun()
                     else:
-                        e_dt = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
-                        diff = e_dt - s_dt
-                        total, _ = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
-                        st.subheader(f"📍 {r['room_name']} | {r['name']}")
-                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')}. זמן: {int(diff.total_seconds()//60)} דק' | נגבה: ₪{total:.2f}")
+                        total, per = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
+                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')}. זמן: {int(diff.total_seconds()//60)} דקות | סה\"כ: ₪{total:.2f}")
                     st.divider()
-                except Exception as e: st.error(f"שגיאה: {e}")
+                except Exception as e:
+                    st.error(f"שגיאה בהצגת חדר: {e}")
         else:
-            st.error("בעיה בחיבור לכספת.")
+            st.error("לא הצלחתי למשוך נתונים מהכספת הפרטית.")
     timer()
 
-# --- 3. מסך מחשבון ---
+# 3. מחשבון (בדיוק כמו שהיה ב-tab3)
 elif menu_choice == "🧮 מחשבון":
     st.subheader("🧮 מחשבון מחיר מהיר")
+    calc_name = st.text_input("👤 שם הלקוח (לבדיקה)", "לקוח כללי")
     c1, c2, c3 = st.columns(3)
-    c_tot = c1.number_input("סה\"כ איש", 1, 50, 4)
-    c_pay = c2.number_input("משלמים", 1, 50, 4)
-    c_min = c3.number_input("זמן דק'", 1, 600, 60)
+    c_tot, c_pay, c_min = c1.number_input("סה\"כ אנשים", 1, 50, 4), c2.number_input("משלמים", 1, 50, 4), c3.number_input("זמן דקות", 1, 600, 60)
     t_res, p_res = calculate_price_logic(c_tot, c_pay, c_min)
     st.divider()
-    st.metric("💰 סה\"כ", f"₪{t_res:.2f}")
-    st.metric("👤 לאדם", f"₪{p_res:.2f}")
+    col_res1, col_res2 = st.columns(2)
+    col_res1.metric("💰 סה\"כ", f"₪{t_res:.2f}")
+    col_res2.metric("👤 לאדם", f"₪{p_res:.2f}")
+    if st.button("📤 שלח לטלגרם", use_container_width=True):
+        send_telegram(f"📝 בדיקה עבור {calc_name}:\n⏱️ זמן: {c_min} דקות\n💵 סה\"כ: ₪{t_res:.2f}\n👤 לאדם: ₪{p_res:.2f}")
