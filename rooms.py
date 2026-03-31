@@ -81,7 +81,12 @@ st.title("🎤 ניהול חכם - חדר קריוקי")
 selected_date = st.date_input("📅 בחר תאריך להצגה", get_now().date())
 if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.session_state.web_bookings = sync_and_cleanup(selected_date)
-    st.success("עודכן!")
+    
+    # הפקודה len סופרת כמה הזמנות יש בתוך הרשימה שקיבלנו
+    bookings_count = len(st.session_state.web_bookings)
+    
+    # ההודעה החדשה שתקפוץ לך
+    st.success(f"עודכן! נמצאו {bookings_count} הזמנות.")
 
 st.divider()
 tab1, tab2, tab3 = st.tabs(["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון"])
