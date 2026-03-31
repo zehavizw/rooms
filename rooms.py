@@ -150,19 +150,16 @@ elif menu_choice == "⚡ עכשיו בפעילות":
         if res.status_code == 200:
             all_rooms = res.json()
             
-            # --- סינון חדרים לפי התאריך שנבחר בלוח השנה (selected_date) ---
+            # סינון חדרים לפי התאריך שבחרת בלוח השנה למעלה
             if v == "⚡ עכשיו בפעילות":
-                # מציג רק חדרים פעילים ששייכים לתאריך שנבחר (לפי חוק ה-6 בבוקר)
                 disp = [r for r in all_rooms if r.get('status', 'active') == 'active' and get_shift_date(r['start_time']) == selected_date]
             else:
-                # מציג רק חדרים שסיימו ושייכים לתאריך שנבחר
                 disp = [r for r in all_rooms if r.get('status') == 'finished' and get_shift_date(r['end_time']) == selected_date]
             
-            # מיון: החדשים ביותר למעלה
             disp.sort(key=lambda x: x.get('start_time', ''), reverse=True)
             
             if not disp:
-                st.info(f"אין חדרים להצגה עבור תאריך {selected_date.strftime('%d/%m/%Y')}")
+                st.info(f"אין חדרים להצגה עבור {selected_date.strftime('%d/%m/%Y')}")
                 
             for r in disp:
                 try:
@@ -193,10 +190,9 @@ elif menu_choice == "⚡ עכשיו בפעילות":
                         st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')}. זמן: {int(diff.total_seconds()//60)} דק' | נגבה: ₪{total:.2f}")
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
-        else:
-            st.error("בעיה בחיבור לכספת.")
+        else: st.error("בעיה בחיבור לכספת.")
     timer()
-
+    
 # 3. מחשבון (בדיוק כמו שהיה ב-tab3)
 elif menu_choice == "🧮 מחשבון":
     st.subheader("🧮 מחשבון מחיר מהיר")
