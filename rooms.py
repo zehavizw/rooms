@@ -76,7 +76,7 @@ def get_shift_date(iso):
 
 # --- ממשק ---
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
-st.title("🎤 ניהול חכם - זיכרון קבוע")
+st.title("🎤 ניהול חכם - חדר קריוקי")
 
 selected_date = st.date_input("📅 בחר תאריך להצגה", get_now().date())
 if st.button("🔄 סנכרן נתונים", use_container_width=True):
