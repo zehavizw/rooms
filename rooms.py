@@ -201,6 +201,22 @@ elif menu_choice == "⚡ בפעילות":
                         total, _ = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
                         st.markdown(f"### 🏁 {r['room_name']} | {r['name']}")
                         st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')} ({int(diff.total_seconds()//60)} דק') | נגבה: ₪{total:.2f}")
+                        
+                        # --- התוספות שביקשת: כפתורי המשך והתחלה מחדש ---
+                        col_re1, col_re2 = st.columns(2)
+                        
+                        if col_re1.button("⏳ המשך (זמן מצטבר)", key=f"cont_{r['id']}", use_container_width=True):
+                            # מחזיר לפעילות ושומר על שעת ההתחלה המקורית (ככה הזמן ייחשב ביחד בסיום)
+                            requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"active","end_time":None}, headers=get_my_headers())
+                            send_telegram(f"🔄 המשך פעילות: {r['name']} ב-{r['room_name']} (זמן מצטבר מההתחלה המקורית)")
+                            st.rerun()
+                            
+                        if col_re2.button("🆕 התחלה מחדש (איפוס)", key=f"reset_{r['id']}", use_container_width=True):
+                            # מחזיר לפעילות ומאפס את השעון לעכשיו
+                            requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"active","end_time":None, "start_time":get_now().isoformat()}, headers=get_my_headers())
+                            send_telegram(f"🆕 התחלה מחדש: {r['name']} ב-{r['room_name']} (השעון אופס לעכשיו)")
+                            st.rerun()
+
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
         else: st.error("בעיה בחיבור לכספת.")
