@@ -94,7 +94,7 @@ st.divider()# --- תפריט ניווט יציב (במקום טאבים שקופ
 # --- תפריט ניווט יציב (במקום טאבים שקופצים) ---
 menu_choice = st.radio(
     "ניווט", 
-    ["📅 לוח הזמנות", "⚡ עכשיו בפעילות", "🧮 מחשבון"], 
+    ["📅 לוח הזמנות", "⚡ בפעילות", "🧮 מחשבון"], 
     horizontal=True,
     label_visibility="collapsed"
 )
@@ -143,12 +143,12 @@ if menu_choice == "📅 לוח הזמנות":
                          st.error(f"השמירה נכשלה! קוד {res_post.status_code}: {res_post.text}")
 
 # --- 2. מסך עכשיו בפעילות / סיימו ---
-elif menu_choice == "⚡ עכשיו בפעילות":
+elif menu_choice == "⚡ בפעילות":
     # עיצוב מודרני יותר לבחירה בין בפעילות לסיימו
     v = st.segmented_control(
         "מצב תצוגה", 
-        options=["⚡ בפעילות", "🏁 סיימו"], 
-        default="⚡ בפעילות",
+        options=["⚡ עכשיו בפעילות", "🏁 סיימו"], 
+        default="⚡ עכשיו בפעילות",
         label_visibility="collapsed"
     )
     
@@ -161,7 +161,7 @@ elif menu_choice == "⚡ עכשיו בפעילות":
             all_rooms = res.json()
             
             # בדיקה לפי הבחירה החדשה
-            if v == "⚡ בפעילות":
+            if v == "⚡ עכשיו בפעילות":
                 disp = [r for r in all_rooms if r.get('status', 'active') == 'active' and get_shift_date(r['start_time']) == selected_date]
             else:
                 disp = [r for r in all_rooms if r.get('status') == 'finished' and get_shift_date(r['end_time']) == selected_date]
