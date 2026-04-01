@@ -202,14 +202,14 @@ elif menu_choice == "⚡ בפעילות":
                             requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", 
                                          json={"status":"active", "end_time":None, "start_time":new_virtual_start.isoformat()}, 
                                          headers=get_my_headers())
-                            send_telegram(f"🔄 המשך פעילות: {r['name']} ב-{r['room_name']}.\nהזמן ממשיך מ-{int(already_spent_mins)} דקות (ללא ספירת ההפסקה).")
+                            send_telegram(f"\u200f🔄 המשך פעילות: {r['name']} ב-{r['room_name']}.\n👥 {r['total_people']} אנשים | ⏳ נותרו {int(r['planned_duration'] - already_spent_mins)} דקות לסיום.")
                             st.rerun()
                             
                         if col_re2.button("🆕 התחלה מחדש (איפוס)", key=f"reset_{r['id']}", use_container_width=True):
                             requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", 
                                          json={"status":"active", "end_time":None, "start_time":get_now().isoformat()}, 
                                          headers=get_my_headers())
-                            send_telegram(f"\u200f🆕 התחלה מחדש: {r['name']} ב-{r['room_name']} (השעון אופס לעכשיו).")
+                            send_telegram(f"\u200f🆕 התחלה מחדש: {r['name']} ב-{r['room_name']}.\n👥 {r['total_people']} אנשים | ⏳ נותרו {int(r['planned_duration'])} דקות לסיום.")
                             st.rerun()
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
