@@ -56,24 +56,10 @@ def sync_and_cleanup(selected_date):
     # קביעת תאריך השאילתה (אם לפני 6 בבוקר, מחפשים את אתמול)
     q_date = (now - timedelta(days=1)).strftime("%Y-%m-%d") if (selected_date == now.date() and now.hour < 6) else selected_date.strftime("%Y-%m-%d")
     
-    # בדיקה האם אנחנו מסנכרנים את המשמרת הנוכחית
-    is_current = (q_date == now.strftime("%Y-%m-%d")) or (now.hour < 6 and q_date == (now - timedelta(days=1)).strftime("%Y-%m-%d"))
-    
     res = requests.get(f"{SOURCE_URL}/rest/v1/bookings", headers=get_source_headers(), params={"booking_date": f"eq.{q_date}", "status": "neq.cancelled", "select": "*,room:rooms(*)"})
     if res.status_code != 200: return []
     
-    source_bookings = res.json()
-    
-    if is_current:
-        ids = [str(b['id']) for b in source_bookings]
-        my_res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
-        if my_res.status_code == 200:
-            for r in my_res.json():
-                # התיקון: מוחקים רק אם ההזמנה לא בלוח **וגם** שעת הכניסה שלה שייכת למשמרת הנוכחית
-                if r.get('status', 'active').startswith('active') and str(r['booking_id']) not in ids:
-                    if get_shift_date(r['start_time']) == selected_date:
-                        requests.delete(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", headers=get_my_headers())
-    return source_bookings
+    return res.json()
 
 def get_shift_date(iso):
     if not iso: return None
