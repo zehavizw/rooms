@@ -80,7 +80,8 @@ st.title("🎤 ניהול חכם - חדר קריוקי")
 
 # אם עכשיו לפני 6 בבוקר, ברירת המחדל תהיה התאריך של אתמול
 default_date = (get_now() - timedelta(days=1)).date() if get_now().hour < 6 else get_now().date()
-selected_date = st.date_input("📅 בחר תאריך להצגה", default_date)if st.button("🔄 סנכרן נתונים", use_container_width=True):
+selected_date = st.date_input("📅 בחר תאריך להצגה", default_date)
+if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.session_state.web_bookings = sync_and_cleanup(selected_date)
     
     # הפקודה len סופרת כמה הזמנות יש בתוך הרשימה שקיבלנו
