@@ -78,20 +78,16 @@ def get_shift_date(iso):
 st.set_page_config(page_title="קריוקי זהבי", layout="centered")
 st.title("🎤 ניהול חכם - חדר קריוקי")
 
-# אם עכשיו לפני 6 בבוקר, ברירת המחדל תהיה התאריך של אתמול
 default_date = (get_now() - timedelta(days=1)).date() if get_now().hour < 6 else get_now().date()
 selected_date = st.date_input("📅 בחר תאריך להצגה", default_date)
+
 if st.button("🔄 סנכרן נתונים", use_container_width=True):
     st.session_state.web_bookings = sync_and_cleanup(selected_date)
-    
-    # הפקודה len סופרת כמה הזמנות יש בתוך הרשימה שקיבלנו
     bookings_count = len(st.session_state.web_bookings)
-    
-    # ההודעה החדשה שתקפוץ לך
     st.success(f"עודכן! נמצאו {bookings_count} הזמנות.")
 
-st.divider()# --- תפריט ניווט יציב (במקום טאבים שקופצים) ---
-# --- תפריט ניווט יציב (במקום טאבים שקופצים) ---
+st.divider()
+
 menu_choice = st.radio(
     "ניווט", 
     ["📅 לוח הזמנות", "⚡ בפעילות", "🧮 מחשבון"], 
@@ -99,9 +95,8 @@ menu_choice = st.radio(
     label_visibility="collapsed"
 )
 
-# --- לוגיקה של המסכים (מועתקת בדיוק מהקוד שלך) ---
+# --- לוגיקה של המסכים ---
 
-# 1. לוח הזמנות (בדיוק כמו שהיה ב-tab1)
 if menu_choice == "📅 לוח הזמנות":
     if 'web_bookings' in st.session_state:
         res_a = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
@@ -110,17 +105,12 @@ if menu_choice == "📅 לוח הזמנות":
             bid = str(b['id'])
             if bid in a_ids: continue
             
-            # משיכת הנתונים האמיתיים מההזמנה
             orig_people = b.get('guest_count', 2)
             orig_duration = int(b.get('duration_hours', 1) * 60)
             
             with st.expander(f"⏳ {b.get('customer_name')} | {b.get('start_time')} ({orig_duration} דקות) | {b.get('room',{}).get('name')}"):
-                 # כאן התיבה מקבלת את orig_people בתור ערך ברירת המחדל שלה
                  p = st.number_input("אנשים", 1, 50, int(orig_people), key=f"p_{bid}")
-
-                 # כאן התיבה מקבלת את orig_duration (שהפכנו לדקות) בתור ברירת מחדל
                  d = st.number_input("משך זמן (דקות)", 15, 300, int(orig_duration), key=f"d_{bid}")
-
                  r_act = st.text_input("חדר", value=b.get('room',{}).get('name'), key=f"r_{bid}")
 
                  if st.button("🚀 כניסה", key=f"in_{bid}", use_container_width=True):
@@ -135,16 +125,11 @@ if menu_choice == "📅 לוח הזמנות":
                          "status": "active"
                      }
                      res_post = requests.post(f"{MY_URL}/rest/v1/active_sessions", json=payload, headers=get_my_headers())
-                     
                      if res_post.status_code in [200, 201, 204]:
                          send_telegram(f"✅ כניסה: {b.get('customer_name')} ל-{r_act} ({p} איש, ל-{d} דקות)")
                          st.rerun()
-                     else:
-                         st.error(f"השמירה נכשלה! קוד {res_post.status_code}: {res_post.text}")
 
-# --- 2. מסך עכשיו בפעילות / סיימו ---
 elif menu_choice == "⚡ בפעילות":
-    # עיצוב מודרני יותר לבחירה בין בפעילות לסיימו
     v = st.segmented_control(
         "מצב תצוגה", 
         options=["⚡ עכשיו בפעילות", "🏁 סיימו"], 
@@ -152,7 +137,7 @@ elif menu_choice == "⚡ בפעילות":
         label_visibility="collapsed"
     )
     
-    st.markdown("<br>", unsafe_allow_html=True) # רווח קטן ליופי
+    st.markdown("<br>", unsafe_allow_html=True)
 
     @st.fragment(run_every=5)
     def timer():
@@ -160,9 +145,9 @@ elif menu_choice == "⚡ בפעילות":
         if res.status_code == 200:
             all_rooms = res.json()
             
-            # בדיקה לפי הבחירה החדשה
             if v == "⚡ עכשיו בפעילות":
-                disp = [r for r in all_rooms if r.get('status', 'active') == 'active' and get_shift_date(r['start_time']) == selected_date]
+                # כאן התיקון הקריטי: משתמשים ב-startswith('active') כדי לכלול גם את ההתראות מהגוגל סקריפט
+                disp = [r for r in all_rooms if r.get('status', '').startswith('active') and get_shift_date(r['start_time']) == selected_date]
             else:
                 disp = [r for r in all_rooms if r.get('status') == 'finished' and get_shift_date(r['end_time']) == selected_date]
             
@@ -176,9 +161,8 @@ elif menu_choice == "⚡ בפעילות":
                     s_dt = datetime.fromisoformat(r['start_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
                     planned = r.get('planned_duration', 60)
                     
-                    if r.get('status') == 'active':
+                    if r.get('status', '').startswith('active'):
                         diff = get_now() - s_dt
-                        # עיצוב כותרת נקייה יותר לחדר
                         st.markdown(f"### 📍 {r['room_name']} | {r['name']}")
                         st.caption(f"🕒 נכנסו ב-{s_dt.strftime('%H:%M')} | יעד: {planned} דקות")
                         
@@ -186,8 +170,7 @@ elif menu_choice == "⚡ בפעילות":
                         total, per = calculate_price_logic(int(r['total_people']), pay, diff.total_seconds()/60)
                         
                         c1, c2, c3 = st.columns([2, 1, 1])
-                        with c1:
-                            st.write(format_simple_clock(diff.total_seconds()))
+                        with c1: st.write(format_simple_clock(diff.total_seconds()))
                         c2.metric("💰 סה\"כ", f"₪{total:.2f}")
                         c3.metric("👤 לאדם", f"₪{per:.2f}")
                         
@@ -202,27 +185,20 @@ elif menu_choice == "⚡ בפעילות":
                         st.markdown(f"### 🏁 {r['room_name']} | {r['name']}")
                         st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')} ({int(diff.total_seconds()//60)} דק') | נגבה: ₪{total:.2f}")
                         
-                        # --- התוספות שביקשת: כפתורי המשך והתחלה מחדש ---
                         col_re1, col_re2 = st.columns(2)
-                        
                         if col_re1.button("⏳ המשך (זמן מצטבר)", key=f"cont_{r['id']}", use_container_width=True):
-                            # מחזיר לפעילות ושומר על שעת ההתחלה המקורית (ככה הזמן ייחשב ביחד בסיום)
                             requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"active","end_time":None}, headers=get_my_headers())
-                            send_telegram(f"🔄 המשך פעילות: {r['name']} ב-{r['room_name']} (זמן מצטבר מההתחלה המקורית)")
+                            send_telegram(f"🔄 המשך פעילות: {r['name']} ב-{r['room_name']}")
                             st.rerun()
-                            
                         if col_re2.button("🆕 התחלה מחדש (איפוס)", key=f"reset_{r['id']}", use_container_width=True):
-                            # מחזיר לפעילות ומאפס את השעון לעכשיו
                             requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"active","end_time":None, "start_time":get_now().isoformat()}, headers=get_my_headers())
-                            send_telegram(f"🆕 התחלה מחדש: {r['name']} ב-{r['room_name']} (השעון אופס לעכשיו)")
+                            send_telegram(f"🆕 התחלה מחדש: {r['name']} ב-{r['room_name']}")
                             st.rerun()
-
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
         else: st.error("בעיה בחיבור לכספת.")
     timer()
-    
-# 3. מחשבון (בדיוק כמו שהיה ב-tab3)
+
 elif menu_choice == "🧮 מחשבון":
     st.subheader("🧮 מחשבון מחיר מהיר")
     calc_name = st.text_input("👤 שם הלקוח (לבדיקה)", "לקוח כללי")
