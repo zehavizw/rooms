@@ -144,16 +144,24 @@ if menu_choice == "📅 לוח הזמנות":
 
 # --- 2. מסך עכשיו בפעילות / סיימו ---
 elif menu_choice == "⚡ עכשיו בפעילות":
-    v = st.radio("מצב:", ["⚡ עכשיו בפעילות", "🏁 סיימו"], horizontal=True)
+    # עיצוב מודרני יותר לבחירה בין בפעילות לסיימו
+    v = st.segmented_control(
+        "מצב תצוגה", 
+        options=["⚡ בפעילות", "🏁 סיימו"], 
+        default="⚡ בפעילות",
+        label_visibility="collapsed"
+    )
     
+    st.markdown("<br>", unsafe_allow_html=True) # רווח קטן ליופי
+
     @st.fragment(run_every=5)
     def timer():
         res = requests.get(f"{MY_URL}/rest/v1/active_sessions", headers=get_my_headers())
         if res.status_code == 200:
             all_rooms = res.json()
             
-            # סינון חדרים לפי התאריך שבחרת בלוח השנה למעלה
-            if v == "⚡ עכשיו בפעילות":
+            # בדיקה לפי הבחירה החדשה
+            if v == "⚡ בפעילות":
                 disp = [r for r in all_rooms if r.get('status', 'active') == 'active' and get_shift_date(r['start_time']) == selected_date]
             else:
                 disp = [r for r in all_rooms if r.get('status') == 'finished' and get_shift_date(r['end_time']) == selected_date]
@@ -170,10 +178,13 @@ elif menu_choice == "⚡ עכשיו בפעילות":
                     
                     if r.get('status') == 'active':
                         diff = get_now() - s_dt
+                        # עיצוב כותרת נקייה יותר לחדר
+                        st.markdown(f"### 📍 {r['room_name']} | {r['name']}")
+                        st.caption(f"🕒 נכנסו ב-{s_dt.strftime('%H:%M')} | יעד: {planned} דקות")
+                        
                         pay = st.number_input("משלמים", 1, 50, int(r.get('paying_people', 2)), key=f"pay_{r['id']}")
                         total, per = calculate_price_logic(int(r['total_people']), pay, diff.total_seconds()/60)
                         
-                        st.subheader(f"📍 {r['room_name']} | {r['name']}")
                         c1, c2, c3 = st.columns([2, 1, 1])
                         with c1:
                             st.write(format_simple_clock(diff.total_seconds()))
@@ -188,8 +199,8 @@ elif menu_choice == "⚡ עכשיו בפעילות":
                         e_dt = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
                         diff = e_dt - s_dt
                         total, _ = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
-                        st.subheader(f"📍 {r['room_name']} | {r['name']}")
-                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')}. זמן: {int(diff.total_seconds()//60)} דק' | נגבה: ₪{total:.2f}")
+                        st.markdown(f"### 🏁 {r['room_name']} | {r['name']}")
+                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')} ({int(diff.total_seconds()//60)} דק') | נגבה: ₪{total:.2f}")
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
         else: st.error("בעיה בחיבור לכספת.")
