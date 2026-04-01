@@ -146,7 +146,6 @@ elif menu_choice == "⚡ בפעילות":
             all_rooms = res.json()
             
             if v == "⚡ עכשיו בפעילות":
-                # כאן התיקון הקריטי: משתמשים ב-startswith('active') כדי לכלול גם את ההתראות מהגוגל סקריפט
                 disp = [r for r in all_rooms if r.get('status', '').startswith('active') and get_shift_date(r['start_time']) == selected_date]
             else:
                 disp = [r for r in all_rooms if r.get('status') == 'finished' and get_shift_date(r['end_time']) == selected_date]
@@ -163,11 +162,20 @@ elif menu_choice == "⚡ בפעילות":
                     
                     if r.get('status', '').startswith('active'):
                         diff = get_now() - s_dt
+                        elapsed_m = diff.total_seconds() / 60
+                        remaining_mins = planned - elapsed_m
+                        
                         st.markdown(f"### 📍 {r['room_name']} | {r['name']}")
                         st.caption(f"🕒 נכנסו ב-{s_dt.strftime('%H:%M')} | יעד: {planned} דקות")
                         
+                        # הצגת זמן שנותר
+                        if remaining_mins > 0:
+                            st.info(f"⏳ נותרו עוד {int(remaining_mins)} דקות לסיום")
+                        else:
+                            st.error(f"⚠️ חריגה של {int(abs(remaining_mins))} דקות!")
+
                         pay = st.number_input("משלמים", 1, 50, int(r.get('paying_people', 2)), key=f"pay_{r['id']}")
-                        total, per = calculate_price_logic(int(r['total_people']), pay, diff.total_seconds()/60)
+                        total, per = calculate_price_logic(int(r['total_people']), pay, elapsed_m)
                         
                         c1, c2, c3 = st.columns([2, 1, 1])
                         with c1: st.write(format_simple_clock(diff.total_seconds()))
@@ -181,18 +189,27 @@ elif menu_choice == "⚡ בפעילות":
                     else:
                         e_dt = datetime.fromisoformat(r['end_time'].replace('Z', '+00:00')).astimezone(IL_TZ)
                         diff = e_dt - s_dt
-                        total, _ = calculate_price_logic(r['total_people'], r['paying_people'], diff.total_seconds()/60)
+                        already_spent_mins = diff.total_seconds() / 60
+                        total, _ = calculate_price_logic(r['total_people'], r['paying_people'], already_spent_mins)
+                        
                         st.markdown(f"### 🏁 {r['room_name']} | {r['name']}")
-                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')} ({int(diff.total_seconds()//60)} דק') | נגבה: ₪{total:.2f}")
+                        st.success(f"הסתיים ב-{e_dt.strftime('%H:%M')} | זמן שנוצל: {int(already_spent_mins)} דק' | נגבה: ₪{total:.2f}")
                         
                         col_re1, col_re2 = st.columns(2)
-                        if col_re1.button("⏳ המשך (זמן מצטבר)", key=f"cont_{r['id']}", use_container_width=True):
-                            requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"active","end_time":None}, headers=get_my_headers())
-                            send_telegram(f"🔄 המשך פעילות: {r['name']} ב-{r['room_name']}")
+                        
+                        if col_re1.button("⏳ המשך (התעלם מההפסקה)", key=f"cont_{r['id']}", use_container_width=True):
+                            new_virtual_start = get_now() - timedelta(minutes=already_spent_mins)
+                            requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", 
+                                         json={"status":"active", "end_time":None, "start_time":new_virtual_start.isoformat()}, 
+                                         headers=get_my_headers())
+                            send_telegram(f"🔄 המשך פעילות: {r['name']} ב-{r['room_name']}.\nהזמן ממשיך מ-{int(already_spent_mins)} דקות (ללא ספירת ההפסקה).")
                             st.rerun()
+                            
                         if col_re2.button("🆕 התחלה מחדש (איפוס)", key=f"reset_{r['id']}", use_container_width=True):
-                            requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", json={"status":"active","end_time":None, "start_time":get_now().isoformat()}, headers=get_my_headers())
-                            send_telegram(f"🆕 התחלה מחדש: {r['name']} ב-{r['room_name']}")
+                            requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", 
+                                         json={"status":"active", "end_time":None, "start_time":get_now().isoformat()}, 
+                                         headers=get_my_headers())
+                            send_telegram(f"🆕 התחלה מחדש: {r['name']} ב-{r['room_name']} (השעון אופס לעכשיו)")
                             st.rerun()
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
