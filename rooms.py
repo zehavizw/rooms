@@ -209,8 +209,7 @@ elif menu_choice == "⚡ בפעילות":
                             requests.patch(f"{MY_URL}/rest/v1/active_sessions?id=eq.{r['id']}", 
                                          json={"status":"active", "end_time":None, "start_time":get_now().isoformat()}, 
                                          headers=get_my_headers())
-                            # שורת "התחלה מחדש" המתוקנת
-                            send_telegram(f"🆕 התחלה מחדש: {r['name']} ב-{r['room_name']} (השעון אופס לעכשיו).")
+                            send_telegram(f"\u200f🆕 התחלה מחדש: {r['name']} ב-{r['room_name']} (השעון אופס לעכשיו).")
                             st.rerun()
                     st.divider()
                 except Exception as e: st.error(f"שגיאה: {e}")
